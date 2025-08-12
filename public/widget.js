@@ -1,10 +1,16 @@
 
 (function(){
+  function fmtUSD(c){ return '$'+(c/100).toFixed(2); }
+  function pct(bal, dep){
+    if (!Number.isFinite(dep) || dep <= 0) return null;
+    const p = ((bal - dep)/dep)*100;
+    return Math.round(p*100)/100;
+  }
   class BalanceWidget extends HTMLElement{
     constructor(){
       super();
       this.attachShadow({ mode:'open' });
-      this.state = { token:null, user:null, balance_cents:0, last_updated:null, baseUrl: this.getAttribute('data-base-url') || '' };
+      this.state = { token:null, user:null, balance_cents:0, deposit_cents:0, last_updated:null, baseUrl: this.getAttribute('data-base-url') || '' };
       this.render();
     }
     setState(p){ this.state = {...this.state, ...p}; this.render(); }
@@ -14,15 +20,19 @@
         body: JSON.stringify({ email, password })
       });
       const data = await r.json();
-      if(r.ok){ this.setState({ token:data.token, user:data.user, balance_cents:data.balance_cents, last_updated:data.last_updated }); }
+      if(r.ok){ this.setState({ token:data.token, user:data.user, balance_cents:data.balance_cents, deposit_cents:data.deposit_cents, last_updated:data.last_updated }); this.me(); }
       else alert(data.error || 'Login failed');
     }
     async me(){
       const r = await fetch(this.state.baseUrl + '/api/me', { headers:{ 'Authorization':'Bearer '+this.state.token }});
-      if(r.ok){ const d = await r.json(); this.setState({ user:d.user, balance_cents:d.balance_cents, last_updated:d.last_updated }); }
+      if(r.ok){ const d = await r.json(); this.setState({ user:d.user, balance_cents:d.balance_cents, deposit_cents:d.deposit_cents, last_updated:d.last_updated }); }
     }
     render(){
-      const usd = '$' + (this.state.balance_cents/100).toFixed(2);
+      const usd = fmtUSD(this.state.balance_cents);
+      const dep = this.state.deposit_cents;
+      const p = pct(this.state.balance_cents, dep);
+      const perf = p===null ? '' : `${p>=0?'+':''}${p.toFixed(2)}%`;
+      const perfClass = p===null ? '' : (p>=0 ? 'up' : 'down');
       this.shadowRoot.innerHTML = `
         <style>
           :host{ display:block; font-family: inherit; }
@@ -33,12 +43,16 @@
           .row{ display:flex; gap:8px; align-items:center }
           .balance{ font-size:42px; font-weight:800; margin:8px 0 0 }
           .muted{ color:#cfcfcf; font-size:12px }
+          .perf{ font-weight:700; margin-top:6px; }
+          .up{ color:#31d07f; } .down{ color:#ff6b6b; }
         </style>
         <div class="card">
           ${this.state.token ? `
             <div class="muted">Logged in as ${this.state.user?.email || ''}</div>
             <div class="balance">${usd}</div>
             <div class="muted">Current USD balance</div>
+            ${dep ? `<div class="muted" style="margin-top:6px">Deposits: ${fmtUSD(dep)}</div>` : ''}
+            ${p===null ? '' : `<div class="perf ${perfClass}">${perf}</div>`}
             ${this.state.last_updated ? `<div class="muted" style="margin-top:6px">Last Updated: ${this.state.last_updated}</div>` : ''}
             <div style="margin-top:12px" class="row">
               <button id="refresh">Refresh</button>
@@ -64,7 +78,7 @@
       `;
       if(this.state.token){
         this.shadowRoot.getElementById('refresh').onclick = () => this.me();
-        this.shadowRoot.getElementById('logout').onclick = () => this.setState({ token:null, user:null, balance_cents:0, last_updated:null });
+        this.shadowRoot.getElementById('logout').onclick = () => this.setState({ token:null, user:null, balance_cents:0, deposit_cents:0, last_updated:null });
       }else{
         const form = this.shadowRoot.getElementById('login');
         form.onsubmit = (e)=>{

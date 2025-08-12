@@ -13,6 +13,13 @@ function toast(msg, ok=true){
   setTimeout(()=> t.remove(), 2200);
 }
 
+function fmtUSD(cents){ return '$'+(cents/100).toFixed(2); }
+function pct(balance_c, deposit_c){
+  if (!Number.isFinite(deposit_c) || deposit_c <= 0) return null;
+  const p = ((balance_c - deposit_c) / deposit_c) * 100;
+  return Math.round(p * 100) / 100; // 2 decimals
+}
+
 // Admin/User SPA with RBAC
 const state = { token: null, user: null, users: [], last_updated: null };
 const app = document.getElementById('app');
@@ -53,7 +60,7 @@ function render() {
   app.appendChild(hdr);
 
   if (state.user.role !== 'admin') {
-    // Non-admin view: big balance + last updated
+    // Non-admin view: big balance + deposit + performance + last updated
     const wrap = document.createElement('div');
     wrap.style.marginTop='16px';
     wrap.innerHTML = `
@@ -61,19 +68,34 @@ function render() {
         <div><strong>Your balance:</strong></div>
         <div id="bal" class="big-balance">$0.00</div>
       </div>
+      <div class="small" id="dep" style="margin-top:6px; color:#cfcfcf"></div>
+      <div class="small" id="perf" style="margin-top:6px"></div>
       <div class="small" id="lu" style="margin-top:6px; color:#cfcfcf"></div>
       <div style="margin-top:12px"><button id="refresh">Refresh</button></div>
     `;
     app.appendChild(wrap);
-    const setBal = (cents)=> { wrap.querySelector('#bal').textContent = '$'+(cents/100).toFixed(2); };
-    const setLU = (text)=> { wrap.querySelector('#lu').textContent = text ? ('Last Updated: '+text) : ''; };
 
-    // Fetch current balance + last updated
+    function setAll(d){
+      const balC = d.balance_cents || 0;
+      const depC = d.deposit_cents || 0;
+      wrap.querySelector('#bal').textContent = fmtUSD(balC);
+      wrap.querySelector('#dep').textContent = depC ? ('Deposits: '+fmtUSD(depC)) : '';
+      const p = pct(balC, depC);
+      const perfEl = wrap.querySelector('#perf');
+      if (p === null) { perfEl.textContent=''; }
+      else {
+        const up = p >= 0;
+        perfEl.textContent = (up?'+':'')+p.toFixed(2)+'%';
+        perfEl.className = 'small perf ' + (up ? 'up' : 'down');
+      }
+      wrap.querySelector('#lu').textContent = d.last_updated ? ('Last Updated: '+d.last_updated) : '';
+    }
+
     fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-      .then(r=>r.json()).then(d=> { setBal(d.balance_cents||0); setLU(d.last_updated||''); }).catch(()=>{});
+      .then(r=>r.json()).then(d=> setAll(d)).catch(()=>{});
     wrap.querySelector('#refresh').onclick = ()=>{
       fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-        .then(r=>r.json()).then(d=> { setBal(d.balance_cents||0); setLU(d.last_updated||''); });
+        .then(r=>r.json()).then(d=> setAll(d));
     };
     return;
   }
@@ -95,7 +117,6 @@ function render() {
   `;
   app.appendChild(lu);
 
-  // Load current LU
   fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token }})
     .then(r=>r.json()).then(d=>{
       state.last_updated = d.last_updated || '';
@@ -160,7 +181,7 @@ function render() {
   tableWrap.style.marginTop = '16px';
   tableWrap.innerHTML = `
     <table>
-      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Balance</th><th>Update</th><th>Actions</th></tr></thead>
+      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Deposit</th><th>Balance</th><th>Update</th><th>Actions</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>`;
   app.appendChild(tableWrap);
@@ -172,6 +193,13 @@ function render() {
       <td>${u.id}</td>
       <td>${u.email}</td>
       <td>${u.role}</td>
+      <td>
+        ${fmtUSD(u.deposit_cents||0)}
+        <div class="row" style="margin-top:6px">
+          <input style="max-width:140px" placeholder="New deposit (USD)" id="d${u.id}" />
+          <button id="sd${u.id}">Save</button>
+        </div>
+      </td>
       <td>$${(u.balance_cents / 100).toFixed(2)}</td>
       <td>
         <div class="row">
@@ -198,6 +226,23 @@ function render() {
         const d = await r.json().catch(()=>({}));
         if(!r.ok) throw new Error(d.error || 'Update failed');
         toast('Balance updated');
+        fetchUsers();
+      }catch(e){ toast(e.message, false); }
+    };
+
+    tr.querySelector('#sd' + u.id).onclick = async () => {
+      const val = tr.querySelector('#d' + u.id).value.trim();
+      const usd = Number(val.replace(/[^0-9.\-]/g,''));
+      if (!Number.isFinite(usd)) return toast('Enter a numeric USD amount', false);
+      try{
+        const r = await fetch('/api/admin/users/' + u.id + '/deposit', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token },
+          body: JSON.stringify({ deposit_cents: Math.round(usd * 100) })
+        });
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(d.error || 'Update failed');
+        toast('Deposit updated');
         fetchUsers();
       }catch(e){ toast(e.message, false); }
     };
@@ -244,7 +289,6 @@ function loginSubmit(form){
       if (!r.ok) throw new Error(data.error || 'Login failed');
       state.token = data.token;
       state.user = data.user;
-      state.last_updated = data.last_updated || null;
       render();
       if (state.user.role === 'admin') fetchUsers();
     }catch(err){

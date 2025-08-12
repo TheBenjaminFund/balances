@@ -15,9 +15,9 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || '2uO5nTEk8Cmh6VCCSow2rf6unRvnFSiBWAdk0pOB7DM';
+const JWT_SECRET = process.env.JWT_SECRET || '014M95zm9SnIoFiamiYURcCuzovN8jsbsTvgUWvNPl4';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'matthew.benjamin@thebenjaminfund.org').toLowerCase();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 's-kGFB4IPfJo1-X-J2T_sw';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Ne4M94hFdb1ncqGUZQb21A';
 
 app.use(helmet());
 app.use(express.json());
@@ -34,8 +34,19 @@ db.serialize(() => {
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
     balance_cents INTEGER NOT NULL DEFAULT 0,
+    deposit_cents INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+
+  // Backfill deposit_cents if missing (older DBs)
+  db.all("PRAGMA table_info(users)", [], (err, cols) => {
+    if (!err && Array.isArray(cols)) {
+      const hasDeposit = cols.some(c => c.name === 'deposit_cents');
+      if (!hasDeposit) {
+        db.run("ALTER TABLE users ADD COLUMN deposit_cents INTEGER NOT NULL DEFAULT 0");
+      }
+    }
+  });
 
   db.run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -46,8 +57,8 @@ db.serialize(() => {
     if (err) { console.error(err); return; }
     if (!row) {
       const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-      db.run("INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
-        [ADMIN_EMAIL, hash, 'admin', 0],
+      db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents) VALUES (?,?,?,?,?)",
+        [ADMIN_EMAIL, hash, 'admin', 0, 0],
         (e) => { if (e) console.error("Admin seed error", e); else console.log("Seeded admin:", ADMIN_EMAIL); }
       );
     } else {
@@ -85,13 +96,13 @@ app.post('/api/auth/register', (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   const hash = bcrypt.hashSync(password, 10);
-  db.run("INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
-    [email.toLowerCase(), hash, 'user', 0],
+  db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents) VALUES (?,?,?,?,?)",
+    [email.toLowerCase(), hash, 'user', 0, 0],
     function(err) {
       if (err) return res.status(400).json({ error: 'User exists or invalid' });
       const user = { id: this.lastID, email: email.toLowerCase(), role: 'user' };
       const token = signToken(user);
-      res.json({ token, user, balance_cents: 0 });
+      res.json({ token, user, balance_cents: 0, deposit_cents: 0 });
     });
 });
 
@@ -105,16 +116,25 @@ app.post('/api/auth/login', (req, res) => {
     const user = { id: row.id, email: row.email, role: row.role };
     const token = signToken(user);
     getSetting('last_updated', (e, v) => {
-      res.json({ token, user, balance_cents: row.balance_cents, last_updated: v });
+      res.json({
+        token,
+        user,
+        balance_cents: row.balance_cents,
+        deposit_cents: row.deposit_cents,
+        last_updated: v
+      });
     });
   });
 });
 
 app.get('/api/me', auth, (req, res) => {
-  db.get("SELECT id, email, role, balance_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
+  db.get("SELECT id, email, role, balance_cents, deposit_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
     if (err || !row) return res.status(404).json({ error: 'Not found' });
     getSetting('last_updated', (e, v) => {
-      res.json({ user: { id: row.id, email: row.email, role: row.role }, balance_cents: row.balance_cents, last_updated: v });
+      res.json({ user: { id: row.id, email: row.email, role: row.role },
+                 balance_cents: row.balance_cents,
+                 deposit_cents: row.deposit_cents,
+                 last_updated: v });
     });
   });
 });
@@ -126,7 +146,7 @@ app.get('/api/last-updated', (req, res) => {
 
 // Admin endpoints
 app.get('/api/admin/users', auth, adminOnly, (req, res) => {
-  db.all("SELECT id, email, role, balance_cents, created_at FROM users ORDER BY created_at DESC", [], (err, rows) => {
+  db.all("SELECT id, email, role, balance_cents, deposit_cents, created_at FROM users ORDER BY created_at DESC", [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json(rows);
   });
@@ -136,11 +156,11 @@ app.post('/api/admin/users', auth, adminOnly, (req, res) => {
   const { email, password, role = 'user' } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   const hash = bcrypt.hashSync(password, 10);
-  db.run("INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
-    [email.toLowerCase(), hash, role, 0],
+  db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents) VALUES (?,?,?,?,?)",
+    [email.toLowerCase(), hash, role, 0, 0],
     function(err) {
       if (err) return res.status(400).json({ error: 'User exists or invalid' });
-      res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0, password });
+      res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0, deposit_cents: 0, password });
     });
 });
 
@@ -170,6 +190,16 @@ app.patch('/api/admin/users/:id/balance', auth, adminOnly, (req, res) => {
   const { balance_cents } = req.body || {};
   if (Number.isNaN(id) || !Number.isFinite(balance_cents)) return res.status(400).json({ error: 'Bad input' });
   db.run("UPDATE users SET balance_cents = ? WHERE id = ?", [Math.round(balance_cents), id], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ updated: this.changes > 0 });
+  });
+});
+
+app.patch('/api/admin/users/:id/deposit', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { deposit_cents } = req.body || {};
+  if (Number.isNaN(id) || !Number.isFinite(deposit_cents)) return res.status(400).json({ error: 'Bad input' });
+  db.run("UPDATE users SET deposit_cents = ? WHERE id = ?", [Math.round(deposit_cents), id], function(err) {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json({ updated: this.changes > 0 });
   });
