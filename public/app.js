@@ -13,15 +13,12 @@ function toast(msg, ok=true){
   setTimeout(()=> t.remove(), 2200);
 }
 
-function fmtUSD(cents){ return '$'+(cents/100).toFixed(2); }
-function pct(balance_c, deposit_c){
-  if (!Number.isFinite(deposit_c) || deposit_c <= 0) return null;
-  const p = ((balance_c - deposit_c) / deposit_c) * 100;
-  return Math.round(p * 100) / 100; // 2 decimals
-}
+const fmtUSD = (cents)=> new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format((cents||0)/100);
+const fmtPct = (n)=> (n>0?'+':'') + n.toFixed(2) + '%';
 
 // Admin/User SPA with RBAC
 const state = { token: null, user: null, users: [], last_updated: null };
+
 const app = document.getElementById('app');
 
 function render() {
@@ -60,43 +57,70 @@ function render() {
   app.appendChild(hdr);
 
   if (state.user.role !== 'admin') {
-    // Non-admin view: big balance + deposit + performance + last updated
+    // Non-admin view: three stat tiles + last updated + refresh
     const wrap = document.createElement('div');
-    wrap.style.marginTop='16px';
-    wrap.innerHTML = `
-      <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-end">
-        <div><strong>Your balance:</strong></div>
-        <div id="bal" class="big-balance">$0.00</div>
+    const stats = document.createElement('div');
+    stats.className = 'stats';
+    stats.innerHTML = `
+      <div class="stat">
+        <div class="label">Current Balance</div>
+        <div id="val-balance" class="value balance">$0.00</div>
       </div>
-      <div class="small" id="dep" style="margin-top:6px; color:#cfcfcf"></div>
-      <div class="small" id="perf" style="margin-top:6px"></div>
-      <div class="small" id="lu" style="margin-top:6px; color:#cfcfcf"></div>
-      <div style="margin-top:12px"><button id="refresh">Refresh</button></div>
+      <div class="stat">
+        <div class="label">Deposits</div>
+        <div id="val-deposits" class="value medium">$0.00</div>
+      </div>
+      <div class="stat">
+        <div class="label">Performance</div>
+        <div id="val-perf" class="value performance">—</div>
+        <div class="sub" id="perf-sub"></div>
+      </div>
     `;
+    wrap.appendChild(stats);
+
+    const meta = document.createElement('div');
+    meta.innerHTML = `
+      <div class="separator"></div>
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap">
+        <div class="small" id="lu"></div>
+        <button id="refresh">Refresh</button>
+      </div>`;
+    wrap.appendChild(meta);
+    wrap.style.marginTop = '16px';
     app.appendChild(wrap);
 
-    function setAll(d){
-      const balC = d.balance_cents || 0;
-      const depC = d.deposit_cents || 0;
-      wrap.querySelector('#bal').textContent = fmtUSD(balC);
-      wrap.querySelector('#dep').textContent = depC ? ('Deposits: '+fmtUSD(depC)) : '';
-      const p = pct(balC, depC);
-      const perfEl = wrap.querySelector('#perf');
-      if (p === null) { perfEl.textContent=''; }
-      else {
-        const up = p >= 0;
-        perfEl.textContent = (up?'+':'')+p.toFixed(2)+'%';
-        perfEl.className = 'small perf ' + (up ? 'up' : 'down');
+    const elBal = stats.querySelector('#val-balance');
+    const elDep = stats.querySelector('#val-deposits');
+    const elPerf = stats.querySelector('#val-perf');
+    const elPerfSub = stats.querySelector('#perf-sub');
+    const elLU = meta.querySelector('#lu');
+
+    function populate(d){
+      const balC = d.balance_cents||0;
+      const depC = d.deposit_cents||0;
+      elBal.textContent = fmtUSD(balC);
+      elDep.textContent = fmtUSD(depC);
+      if (depC > 0){
+        const pct = ((balC - depC) / depC) * 100;
+        elPerf.textContent = fmtPct(pct);
+        elPerf.classList.remove('value--good','value--bad');
+        elPerf.classList.add(pct >= 0 ? 'value--good' : 'value--bad','performance');
+        elPerfSub.textContent = (pct>=0?'+':'') + fmtUSD(balC - depC) + ' overall';
+      } else {
+        elPerf.textContent = '—';
+        elPerf.classList.remove('value--good','value--bad');
+        elPerfSub.textContent = 'Add a deposit to see performance';
       }
-      wrap.querySelector('#lu').textContent = d.last_updated ? ('Last Updated: '+d.last_updated) : '';
+      elLU.textContent = d.last_updated ? ('Last Updated: ' + d.last_updated) : '';
     }
 
-    fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-      .then(r=>r.json()).then(d=> setAll(d)).catch(()=>{});
-    wrap.querySelector('#refresh').onclick = ()=>{
+    function loadMe(){
       fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-        .then(r=>r.json()).then(d=> setAll(d));
-    };
+        .then(r=>r.json()).then(populate).catch(()=>{});
+    }
+
+    meta.querySelector('#refresh').onclick = loadMe;
+    loadMe();
     return;
   }
 
@@ -119,8 +143,7 @@ function render() {
 
   fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token }})
     .then(r=>r.json()).then(d=>{
-      state.last_updated = d.last_updated || '';
-      lu.querySelector('#curLU').textContent = state.last_updated ? ('Current: '+state.last_updated) : 'Current: (not set)';
+      lu.querySelector('#curLU').textContent = d.last_updated ? ('Current: '+d.last_updated) : 'Current: (not set)';
     });
 
   lu.querySelector('#saveLU').onclick = async ()=>{
@@ -135,8 +158,7 @@ function render() {
       const d = await r.json();
       if(!r.ok) throw new Error(d.error || 'Save failed');
       toast('Last Updated saved');
-      state.last_updated = d.last_updated;
-      lu.querySelector('#curLU').textContent = 'Current: ' + state.last_updated;
+      lu.querySelector('#curLU').textContent = 'Current: ' + d.last_updated;
     }catch(e){ toast(e.message,false); }
   };
 
@@ -181,7 +203,7 @@ function render() {
   tableWrap.style.marginTop = '16px';
   tableWrap.innerHTML = `
     <table>
-      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Deposit</th><th>Balance</th><th>Update</th><th>Actions</th></tr></thead>
+      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Deposits</th><th>Balance</th><th>Update</th><th>Actions</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>`;
   app.appendChild(tableWrap);
@@ -193,17 +215,12 @@ function render() {
       <td>${u.id}</td>
       <td>${u.email}</td>
       <td>${u.role}</td>
-      <td>
-        ${fmtUSD(u.deposit_cents||0)}
-        <div class="row" style="margin-top:6px">
-          <input style="max-width:140px" placeholder="New deposit (USD)" id="d${u.id}" />
-          <button id="sd${u.id}">Save</button>
-        </div>
-      </td>
+      <td>$${((u.deposit_cents||0) / 100).toFixed(2)}</td>
       <td>$${(u.balance_cents / 100).toFixed(2)}</td>
       <td>
-        <div class="row">
-          <input style="max-width:160px" placeholder="New balance (USD)" id="b${u.id}" />
+        <div class="row" style="flex-wrap:wrap; gap:8px">
+          <input style="max-width:140px" placeholder="New deposit (USD)" id="d${u.id}" />
+          <input style="max-width:140px" placeholder="New balance (USD)" id="b${u.id}" />
           <button id="s${u.id}">Save</button>
         </div>
       </td>
@@ -214,35 +231,32 @@ function render() {
     tbody.appendChild(tr);
 
     tr.querySelector('#s' + u.id).onclick = async () => {
-      const val = tr.querySelector('#b' + u.id).value.trim();
-      const usd = Number(val.replace(/[^0-9.\-]/g,''));
-      if (!Number.isFinite(usd)) return toast('Enter a numeric USD amount', false);
+      const depVal = tr.querySelector('#d' + u.id).value.trim();
+      const balVal = tr.querySelector('#b' + u.id).value.trim();
+      const dep = depVal? Number(depVal.replace(/[^0-9.\-]/g,'')) : null;
+      const bal = balVal? Number(balVal.replace(/[^0-9.\-]/g,'')) : null;
+      if (depVal && !Number.isFinite(dep)) return toast('Deposit must be a number', false);
+      if (balVal && !Number.isFinite(bal)) return toast('Balance must be a number', false);
       try{
-        const r = await fetch('/api/admin/users/' + u.id + '/balance', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token },
-          body: JSON.stringify({ balance_cents: Math.round(usd * 100) })
-        });
-        const d = await r.json().catch(()=>({}));
-        if(!r.ok) throw new Error(d.error || 'Update failed');
-        toast('Balance updated');
-        fetchUsers();
-      }catch(e){ toast(e.message, false); }
-    };
-
-    tr.querySelector('#sd' + u.id).onclick = async () => {
-      const val = tr.querySelector('#d' + u.id).value.trim();
-      const usd = Number(val.replace(/[^0-9.\-]/g,''));
-      if (!Number.isFinite(usd)) return toast('Enter a numeric USD amount', false);
-      try{
-        const r = await fetch('/api/admin/users/' + u.id + '/deposit', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token },
-          body: JSON.stringify({ deposit_cents: Math.round(usd * 100) })
-        });
-        const d = await r.json().catch(()=>({}));
-        if(!r.ok) throw new Error(d.error || 'Update failed');
-        toast('Deposit updated');
+        // PATCH balance
+        if (balVal){
+          const r1 = await fetch('/api/admin/users/' + u.id + '/balance', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token },
+            body: JSON.stringify({ balance_cents: Math.round(bal * 100) })
+          });
+          if(!r1.ok) throw new Error('Balance update failed');
+        }
+        // PATCH deposit (assumes endpoint exists in your current server)
+        if (depVal){
+          const r2 = await fetch('/api/admin/users/' + u.id + '/deposit', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token },
+            body: JSON.stringify({ deposit_cents: Math.round(dep * 100) })
+          });
+          if(!r2.ok) throw new Error('Deposit update failed');
+        }
+        toast('Saved');
         fetchUsers();
       }catch(e){ toast(e.message, false); }
     };
@@ -265,8 +279,7 @@ function render() {
         const r = await fetch('/api/admin/users/'+u.id, {
           method:'DELETE', headers:{ 'Authorization':'Bearer '+state.token }
         });
-        const d = await r.json();
-        if(!r.ok) throw new Error(d.error || 'Delete failed');
+        if(!r.ok) throw new Error('Delete failed');
         toast('User deleted');
         fetchUsers();
       }catch(e){ toast(e.message,false); }

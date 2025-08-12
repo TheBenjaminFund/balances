@@ -5,17 +5,19 @@
   --muted:#cfcfcf;
   --text:#ffffff;
   --accent:#04a156;
-  --radius:14px;
-  --shadow:0 10px 25px rgba(0,0,0,.35);
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  --radius:16px;
+  --shadow:0 10px 30px rgba(0,0,0,.35);
+  --danger:#ef4444;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);}
 .container{max-width:1100px;margin:40px auto;padding:0 16px}
 .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:24px}
 h1,h2{margin:0 0 12px}
-h1{font-size:28px} h2{font-size:22px}
-button{border:0;border-radius:12px;padding:10px 14px;cursor:pointer;background:var(--accent);color:#fff;box-shadow:0 8px 18px rgba(4,161,86,.35)}
+h1{font-size:28px;letter-spacing:.2px}
+h2{font-size:22px}
+button{border:0;border-radius:12px;padding:10px 14px;cursor:pointer;background:var(--accent);color:#fff;box-shadow:0 8px 18px rgba(4,161,86,.35);font-weight:600}
 button:disabled{opacity:.6;cursor:not-allowed}
 input{background:#151515;border:1px solid #2b2b2b;color:var(--text);border-radius:12px;padding:10px 12px;width:100%}
 label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
@@ -26,7 +28,17 @@ table{width:100%;border-collapse:collapse}
 th,td{padding:12px;border-bottom:1px solid #2b2b2b}
 .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#0d3d28;color:#8ef0be;font-size:12px}
 input::placeholder{color:#9a9a9a}
-.big-balance{ font-size:44px; font-weight:800; margin:6px 0 0; }
-.perf{ font-weight:700; margin-left:8px; }
-.perf.up{ color:#31d07f; } /* lighter green for positive */
-.perf.down{ color:#ff6b6b; } /* red for negative */
+
+/* Stats layout */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:16px}
+@media (max-width:820px){ .stats{grid-template-columns:1fr; } }
+.stat{background:#1b1b1b;border:1px solid #2b2b2b;border-radius:14px;padding:16px;box-shadow:0 6px 16px rgba(0,0,0,.25)}
+.stat .label{color:#bdbdbd;font-size:12px;letter-spacing:.4px;text-transform:uppercase}
+.stat .value{font-weight:800;margin-top:6px}
+.stat .value.balance{font-size:44px;line-height:1.05}
+.stat .value.medium{font-size:24px}
+.stat .value.performance{font-size:30px}
+.stat .sub{color:#9a9a9a;font-size:12px;margin-top:8px}
+.value--good{color:var(--accent)}
+.value--bad{color:var(--danger)}
+.separator{height:1px;background:#2b2b2b;margin:16px 0}
