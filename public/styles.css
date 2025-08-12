@@ -6,12 +6,12 @@
   --text:#ffffff;
   --accent:#04a156;
   --danger:#b3261e;
-  --radius:14px;
-  --shadow:0 10px 25px rgba(0,0,0,.35);
-  font-family: system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
+  --radius:16px;
+  --shadow:0 14px 30px rgba(0,0,0,.35);
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text)}
+body{margin:0;background:var(--bg);color:var(--text);}
 .container{max-width:1100px;margin:40px auto;padding:0 16px}
 .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:24px}
 h1,h2{margin:0 0 12px}
@@ -23,17 +23,27 @@ label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
 .row{display:flex;gap:12px;align-items:center}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .small{font-size:12px;color:var(--muted)}
+table{width:100%;border-collapse:collapse}
+th,td{padding:12px;border-bottom:1px solid #2b2b2b}
 .badge{display:inline-block;padding:6px 10px;border-radius:999px;background:#0d3d28;color:#8ef0be;font-size:12px}
+input::placeholder{color:#9a9a9a}
 
-/* Stat tiles for user view */
-.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:12px}
-.stat{background:#1b1b1b;border:1px solid #2b2b2b;border-radius:12px;padding:14px}
-.stat .label{font-size:12px;color:#cfcfcf}
-.stat .value{font-size:28px;font-weight:800;margin-top:6px}
-.stat .value.big{font-size:36px}
-.stat .sub{font-size:12px;color:#9a9a9a;margin-top:4px}
-
-@media (max-width:760px){
-  .grid{grid-template-columns:1fr}
-  .stats{grid-template-columns:1fr}
+.hero{
+  display:flex;align-items:center;gap:16px;
 }
+.hero img{height:42px;width:auto;display:block}
+.hero .title{font-weight:800;font-size:24px}
+
+.hero-price{display:flex;align-items:baseline;gap:8px;margin-top:6px}
+.hero-price .currency{font-weight:700}
+.hero-price .value{font-size:30px;font-weight:800}
+
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:8px}
+.stat{background:#1a1a1a;border:1px solid #2b2b2b;border-radius:14px;padding:16px}
+.stat .label{font-size:12px;color:#cfcfcf;margin-bottom:6px}
+.stat .value{font-size:28px;font-weight:800}
+.stat .sub{font-size:12px;color:#cfcfcf;margin-top:6px}
+
+.pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}
+.pill.green{background:#0d3d28;color:#8ef0be}
+.pill.red{background:#3d1210;color:#ffc0bd}
