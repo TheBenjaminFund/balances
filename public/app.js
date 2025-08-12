@@ -6,7 +6,7 @@
     if(r.ok){
       const d = await r.json();
       if (typeof d.share_price === 'number') {
-        document.getElementById('heroPrice').textContent = d.share_price.toFixed(2);
+//         document.getElementById('heroPrice').textContent = d.share_price.toFixed(2);
       }
       if (d.last_updated) {
         document.getElementById('heroLU').textContent = 'Last Updated: ' + d.last_updated;
