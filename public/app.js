@@ -13,16 +13,8 @@ function toast(msg, ok=true){
   setTimeout(()=> t.remove(), 2200);
 }
 
-// Populate embed snippet
-const snippetEl = document.getElementById('snippet');
-if (snippetEl) {
-  snippetEl.textContent =
-`<script src="${baseUrl}/widget.js"><\/script>
-<balance-widget data-base-url="${baseUrl}"></balance-widget>`;
-}
-
 // Admin/User SPA with RBAC
-const state = { token: null, user: null, users: [] };
+const state = { token: null, user: null, users: [], last_updated: null };
 const app = document.getElementById('app');
 
 function render() {
@@ -61,28 +53,71 @@ function render() {
   app.appendChild(hdr);
 
   if (state.user.role !== 'admin') {
-    // Non-admin view: read-only balance, refresh button
+    // Non-admin view: big balance + last updated
     const wrap = document.createElement('div');
     wrap.style.marginTop='16px';
     wrap.innerHTML = `
-      <div class="row" style="gap:16px; flex-wrap:wrap">
+      <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-end">
         <div><strong>Your balance:</strong></div>
-        <div id="bal" style="font-weight:700">$0.00</div>
-        <div><button id="refresh">Refresh</button></div>
-      </div>`;
+        <div id="bal" class="big-balance">$0.00</div>
+      </div>
+      <div class="small" id="lu" style="margin-top:6px; color:#cfcfcf"></div>
+      <div style="margin-top:12px"><button id="refresh">Refresh</button></div>
+    `;
     app.appendChild(wrap);
     const setBal = (cents)=> { wrap.querySelector('#bal').textContent = '$'+(cents/100).toFixed(2); };
-    // Fetch current balance
+    const setLU = (text)=> { wrap.querySelector('#lu').textContent = text ? ('Last Updated: '+text) : ''; };
+
+    // Fetch current balance + last updated
     fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-      .then(r=>r.json()).then(d=> setBal(d.balance_cents||0)).catch(()=>{});
+      .then(r=>r.json()).then(d=> { setBal(d.balance_cents||0); setLU(d.last_updated||''); }).catch(()=>{});
     wrap.querySelector('#refresh').onclick = ()=>{
       fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-        .then(r=>r.json()).then(d=> setBal(d.balance_cents||0));
+        .then(r=>r.json()).then(d=> { setBal(d.balance_cents||0); setLU(d.last_updated||''); });
     };
     return;
   }
 
   // ----- Admin-only UI below -----
+
+  // Last Updated control
+  const lu = document.createElement('div');
+  lu.style.marginTop='16px';
+  lu.innerHTML = `
+    <div class="row" style="gap:16px; flex-wrap:wrap">
+      <div>
+        <label>Last Updated (YYYY-MM-DD)</label>
+        <input id="lastUpdated" placeholder="2025-08-12" />
+      </div>
+      <div><button id="saveLU">Save date</button></div>
+    </div>
+    <div class="small" id="curLU" style="margin-top:6px"></div>
+  `;
+  app.appendChild(lu);
+
+  // Load current LU
+  fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token }})
+    .then(r=>r.json()).then(d=>{
+      state.last_updated = d.last_updated || '';
+      lu.querySelector('#curLU').textContent = state.last_updated ? ('Current: '+state.last_updated) : 'Current: (not set)';
+    });
+
+  lu.querySelector('#saveLU').onclick = async ()=>{
+    const val = lu.querySelector('#lastUpdated').value.trim();
+    if(!val) return toast('Enter a date (YYYY-MM-DD)', false);
+    try{
+      const r = await fetch('/api/admin/last-updated', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+        body: JSON.stringify({ last_updated: val })
+      });
+      const d = await r.json();
+      if(!r.ok) throw new Error(d.error || 'Save failed');
+      toast('Last Updated saved');
+      state.last_updated = d.last_updated;
+      lu.querySelector('#curLU').textContent = 'Current: ' + state.last_updated;
+    }catch(e){ toast(e.message,false); }
+  };
 
   // Create User panel
   const add = document.createElement('div');
@@ -209,6 +244,7 @@ function loginSubmit(form){
       if (!r.ok) throw new Error(data.error || 'Login failed');
       state.token = data.token;
       state.user = data.user;
+      state.last_updated = data.last_updated || null;
       render();
       if (state.user.role === 'admin') fetchUsers();
     }catch(err){

@@ -15,9 +15,9 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || '9LYpR2x-mWmkop2s8xjGw1Q81girdX5lcSEdipnvxbA';
+const JWT_SECRET = process.env.JWT_SECRET || '2uO5nTEk8Cmh6VCCSow2rf6unRvnFSiBWAdk0pOB7DM';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'matthew.benjamin@thebenjaminfund.org').toLowerCase();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'w3MUoxpBRsHDA2LHQH2Twg';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 's-kGFB4IPfJo1-X-J2T_sw';
 
 app.use(helmet());
 app.use(express.json());
@@ -26,7 +26,7 @@ app.use(cors({ origin: true, credentials: true }));
 const dbFile = path.join(__dirname, 'data.sqlite');
 const db = new sqlite3.Database(dbFile);
 
-// Initialize & seed admin
+// Initialize tables and seed admin
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,6 +35,11 @@ db.serialize(() => {
     role TEXT NOT NULL DEFAULT 'user',
     balance_cents INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
   )`);
 
   db.get("SELECT * FROM users WHERE email = ?", [ADMIN_EMAIL], (err, row) => {
@@ -67,6 +72,14 @@ function adminOnly(req, res, next) {
   next();
 }
 
+// Settings helpers
+function getSetting(key, cb) {
+  db.get("SELECT value FROM settings WHERE key = ?", [key], (err, row) => cb(err, row?.value ?? null));
+}
+function setSetting(key, value, cb) {
+  db.run("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, value], cb);
+}
+
 // Public auth
 app.post('/api/auth/register', (req, res) => {
   const { email, password } = req.body || {};
@@ -91,15 +104,24 @@ app.post('/api/auth/login', (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
     const user = { id: row.id, email: row.email, role: row.role };
     const token = signToken(user);
-    res.json({ token, user, balance_cents: row.balance_cents });
+    getSetting('last_updated', (e, v) => {
+      res.json({ token, user, balance_cents: row.balance_cents, last_updated: v });
+    });
   });
 });
 
 app.get('/api/me', auth, (req, res) => {
   db.get("SELECT id, email, role, balance_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
     if (err || !row) return res.status(404).json({ error: 'Not found' });
-    res.json({ user: { id: row.id, email: row.email, role: row.role }, balance_cents: row.balance_cents });
+    getSetting('last_updated', (e, v) => {
+      res.json({ user: { id: row.id, email: row.email, role: row.role }, balance_cents: row.balance_cents, last_updated: v });
+    });
   });
+});
+
+// Public: last updated
+app.get('/api/last-updated', (req, res) => {
+  getSetting('last_updated', (e, v) => res.json({ last_updated: v }));
 });
 
 // Admin endpoints
@@ -118,7 +140,6 @@ app.post('/api/admin/users', auth, adminOnly, (req, res) => {
     [email.toLowerCase(), hash, role, 0],
     function(err) {
       if (err) return res.status(400).json({ error: 'User exists or invalid' });
-      // Return the plaintext password once so admin can copy
       res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0, password });
     });
 });
@@ -126,7 +147,7 @@ app.post('/api/admin/users', auth, adminOnly, (req, res) => {
 app.post('/api/admin/users/:id/reset-password', auth, adminOnly, (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Bad id' });
-  const newPass = Math.floor(100000 + Math.random()*900000).toString().padStart(6,'0'); // six-digit
+  const newPass = Math.floor(100000 + Math.random()*900000).toString().padStart(6,'0');
   const hash = bcrypt.hashSync(newPass, 10);
   db.run("UPDATE users SET password_hash = ? WHERE id = ?", [hash, id], function(err) {
     if (err) return res.status(500).json({ error: 'DB error' });
@@ -151,6 +172,19 @@ app.patch('/api/admin/users/:id/balance', auth, adminOnly, (req, res) => {
   db.run("UPDATE users SET balance_cents = ? WHERE id = ?", [Math.round(balance_cents), id], function(err) {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json({ updated: this.changes > 0 });
+  });
+});
+
+// Admin: last updated
+app.get('/api/admin/last-updated', auth, adminOnly, (req, res) => {
+  getSetting('last_updated', (e, v) => res.json({ last_updated: v }));
+});
+app.post('/api/admin/last-updated', auth, adminOnly, (req, res) => {
+  const { last_updated } = req.body || {};
+  if (!last_updated || typeof last_updated !== 'string') return res.status(400).json({ error: 'last_updated string required' });
+  setSetting('last_updated', last_updated, (err) => {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ saved: true, last_updated });
   });
 });
 
