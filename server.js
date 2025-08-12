@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -15,9 +16,9 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'gL8eltVoBN4mcQuTZdiskcQPlfB8F2OI4OkmNyqDjzQ';
+const JWT_SECRET = process.env.JWT_SECRET || 'z8Wbkax2lQjRDCmN6-_DdDqw83HUpo5PJ-fN3YjzA2w';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'matthew.benjamin@thebenjaminfund.org').toLowerCase();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'xwG38fI6hifIB4YWMmkhuQ';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'oPdgZa3r41E7H_-KSl3y-g';
 
 app.use(helmet());
 app.use(express.json());
@@ -26,7 +27,7 @@ app.use(cors({ origin: true, credentials: true }));
 const dbFile = path.join(__dirname, 'data.sqlite');
 const db = new sqlite3.Database(dbFile);
 
-// Init tables & seed admin
+// Initialize DB and seed admin
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,18 +44,16 @@ db.serialize(() => {
     value TEXT
   )`);
 
-  // For existing DBs: ensure deposit_cents column exists
-  db.get("PRAGMA table_info(users)", [], (err, row) => {}); // touch
-  db.all("PRAGMA table_info(users)", [], (err, rows) => {
+  // Migrate legacy DBs that might not have deposit_cents
+  db.all("PRAGMA table_info(users)", (err, rows) => {
     if (!err) {
       const hasDeposit = rows.some(r => r.name === 'deposit_cents');
       if (!hasDeposit) {
-        db.run("ALTER TABLE users ADD COLUMN deposit_cents INTEGER NOT NULL DEFAULT 0", (e) => { if(e) console.log('deposit column add err (ok if already exists):', e.message); });
+        db.run("ALTER TABLE users ADD COLUMN deposit_cents INTEGER NOT NULL DEFAULT 0");
       }
     }
   });
 
-  // Seed admin
   db.get("SELECT * FROM users WHERE email = ?", [ADMIN_EMAIL], (err, row) => {
     if (err) { console.error(err); return; }
     if (!row) {
@@ -93,7 +92,20 @@ function setSetting(key, value, cb) {
   db.run("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, value], cb);
 }
 
-// Public auth
+// Public endpoints
+app.get('/api/public-stats', (req, res) => {
+  getSetting('share_price', (e1, price) => {
+    getSetting('last_updated', (e2, lu) => {
+      res.json({ share_price: price ? Number(price) : null, last_updated: lu || null });
+    });
+  });
+});
+
+app.get('/api/last-updated', (req, res) => {
+  getSetting('last_updated', (e, v) => res.json({ last_updated: v }));
+});
+
+// Auth
 app.post('/api/auth/register', (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
@@ -117,10 +129,7 @@ app.post('/api/auth/login', (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
     const user = { id: row.id, email: row.email, role: row.role };
     const token = signToken(user);
-    // Use settings for last updated
-    getSetting('last_updated', (e, lu) => {
-      res.json({ token, user, balance_cents: row.balance_cents, deposit_cents: row.deposit_cents, last_updated: lu });
-    });
+    res.json({ token, user, balance_cents: row.balance_cents, deposit_cents: row.deposit_cents });
   });
 });
 
@@ -128,15 +137,13 @@ app.get('/api/me', auth, (req, res) => {
   db.get("SELECT id, email, role, balance_cents, deposit_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
     if (err || !row) return res.status(404).json({ error: 'Not found' });
     getSetting('last_updated', (e, v) => {
-      res.json({ user: { id: row.id, email: row.email, role: row.role }, balance_cents: row.balance_cents, deposit_cents: row.deposit_cents, last_updated: v });
+      res.json({
+        user: { id: row.id, email: row.email, role: row.role },
+        balance_cents: row.balance_cents,
+        deposit_cents: row.deposit_cents,
+        last_updated: v || null
+      });
     });
-  });
-});
-
-// Public: share price + last updated
-app.get('/api/share-price', (req, res) => {
-  getSetting('share_price', (e, sp) => {
-    getSetting('last_updated', (e2, lu) => res.json({ share_price: sp, last_updated: lu }));
   });
 });
 
@@ -201,7 +208,7 @@ app.patch('/api/admin/users/:id/deposit', auth, adminOnly, (req, res) => {
   });
 });
 
-// Admin: last updated + share price
+// Admin last updated & share price
 app.get('/api/admin/last-updated', auth, adminOnly, (req, res) => {
   getSetting('last_updated', (e, v) => res.json({ last_updated: v }));
 });
@@ -215,14 +222,14 @@ app.post('/api/admin/last-updated', auth, adminOnly, (req, res) => {
 });
 
 app.get('/api/admin/share-price', auth, adminOnly, (req, res) => {
-  getSetting('share_price', (e, v) => res.json({ share_price: v }));
+  getSetting('share_price', (e, v) => res.json({ share_price: v ? Number(v) : null }));
 });
 app.post('/api/admin/share-price', auth, adminOnly, (req, res) => {
   const { share_price } = req.body || {};
-  if (typeof share_price !== 'string' || !share_price.trim()) return res.status(400).json({ error: 'share_price string required' });
-  setSetting('share_price', share_price.trim(), (err) => {
+  if (share_price === undefined || share_price === null || isNaN(Number(share_price))) return res.status(400).json({ error: 'share_price number required' });
+  setSetting('share_price', String(share_price), (err) => {
     if (err) return res.status(500).json({ error: 'DB error' });
-    res.json({ saved: true, share_price: share_price.trim() });
+    res.json({ saved: true, share_price: Number(share_price) });
   });
 });
 

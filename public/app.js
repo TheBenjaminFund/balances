@@ -1,7 +1,7 @@
 
 const baseUrl = window.location.origin;
 
-// toast
+// Toast
 function toast(msg, ok=true){
   const t = document.createElement('div');
   t.textContent = msg;
@@ -13,25 +13,26 @@ function toast(msg, ok=true){
   setTimeout(()=> t.remove(), 2200);
 }
 
-// Load share price hero
-(async function loadShare(){
+// Public hero: share price + last updated
+(async function hero(){
   try{
-    const r = await fetch('/api/share-price');
-    const d = await r.json();
-    document.getElementById('spVal').textContent = d.share_price ? ('$' + d.share_price) : '$—';
-    document.getElementById('spLU').textContent = d.last_updated ? ('Last Updated: ' + d.last_updated) : '';
+    const r = await fetch('/api/public-stats');
+    if(r.ok){
+      const d = await r.json();
+      if (typeof d.share_price === 'number') document.getElementById('heroPrice').textContent = '$'+Number(d.share_price).toFixed(2);
+      if (d.last_updated) document.getElementById('heroLU').textContent = 'Last Updated: ' + d.last_updated;
+    }
   }catch{}
 })();
 
-// App state
-const state = { token: null, user: null, users: [], last_updated: null, share_price: null };
+// State
+const state = { token:null, user:null, users:[], last_updated:null, share_price:null };
+
 const app = document.getElementById('app');
 
-function render() {
-  if (!app) return;
+function render(){
   app.innerHTML = '';
-
-  if (!state.token) {
+  if(!state.token){
     const form = document.createElement('form');
     form.innerHTML = `
       <div class="grid">
@@ -52,150 +53,111 @@ function render() {
     return;
   }
 
-  // Shared header
   const hdr = document.createElement('div');
   hdr.className = 'row';
   hdr.innerHTML = `
     <div class="badge">Logged in as ${state.user.email} (${state.user.role})</div>
     <div style="flex:1"></div>
     <button id="logout">Log out</button>`;
-  hdr.querySelector('#logout').onclick = () => { state.token=null; state.user=null; state.users=[]; render(); };
+  hdr.querySelector('#logout').onclick = ()=>{ state.token=null; state.user=null; state.users=[]; render(); };
   app.appendChild(hdr);
 
-  if (state.user.role !== 'admin') {
-    // Non-admin view: stat tiles
+  if(state.user.role !== 'admin'){
+    // Non-admin: 3 stat tiles + last updated
     const wrap = document.createElement('div');
-    wrap.style.marginTop='16px';
     wrap.innerHTML = `
-      <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-end">
-        <div><strong>Your balance</strong></div>
-        <div id="bal" class="big-balance">$0.00</div>
-      </div>
-      <div class="small" id="lu" style="margin-top:6px; color:#cfcfcf"></div>
       <div class="stats">
         <div class="stat">
           <div class="label">Balance</div>
-          <div class="value" id="vBal">$0.00</div>
-          <div class="sub">Current USD balance</div>
+          <div id="uBal" class="value big">$0.00</div>
         </div>
         <div class="stat">
           <div class="label">Deposits</div>
-          <div class="value" id="vDep">$0.00</div>
-          <div class="sub">Total invested with fund</div>
+          <div id="uDep" class="value">$0.00</div>
         </div>
         <div class="stat">
           <div class="label">Performance</div>
-          <div class="value" id="vPerf">—</div>
+          <div id="uPerf" class="value">—</div>
           <div class="sub">Since initial deposit</div>
         </div>
       </div>
-      <div style="margin-top:12px"><button id="refresh">Refresh</button></div>
+      <div class="small" id="uLU" style="margin-top:10px"></div>
     `;
     app.appendChild(wrap);
-
-    const fmt = (cents)=> '$'+(cents/100).toFixed(2);
-    const setAll = (bal, dep, lu)=>{
-      document.getElementById('bal').textContent = fmt(bal);
-      document.getElementById('vBal').textContent = fmt(bal);
-      document.getElementById('vDep').textContent = fmt(dep);
-      document.getElementById('lu').textContent = lu ? ('Last Updated: '+lu) : '';
-      const perfEl = document.getElementById('vPerf');
-      if (dep > 0){
-        const pct = ((bal - dep) / dep) * 100;
-        const sign = pct >= 0 ? '+' : '';
-        perfEl.textContent = sign + pct.toFixed(2) + '%';
-        perfEl.className = 'value ' + (pct >= 0 ? 'gain' : 'loss');
-      } else {
-        perfEl.textContent = '—';
-        perfEl.className = 'value';
+    const fmt = (c)=> '$'+(c/100).toFixed(2);
+    const set = (d)=>{
+      document.getElementById('uBal').textContent = fmt(d.balance_cents||0);
+      document.getElementById('uDep').textContent = fmt(d.deposit_cents||0);
+      const dep = d.deposit_cents||0;
+      let perfNode = document.getElementById('uPerf');
+      if(dep>0){
+        const pct = ((d.balance_cents - dep) / dep) * 100;
+        const s = (pct>=0?'+':'') + pct.toFixed(2) + '%';
+        perfNode.textContent = s;
+        perfNode.style.color = pct>=0 ? '#04a156' : '#ff6b6b';
+      }else{
+        perfNode.textContent = '—';
+        perfNode.style.color = '#ffffff';
       }
+      document.getElementById('uLU').textContent = d.last_updated ? ('Last Updated: '+d.last_updated) : '';
     };
-
-    // Fetch current data
     fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-      .then(r=>r.json())
-      .then(d=> setAll(d.balance_cents||0, d.deposit_cents||0, d.last_updated||''))
-      .catch(()=>{});
-
-    document.getElementById('refresh').onclick = ()=>{
-      fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-        .then(r=>r.json())
-        .then(d=> setAll(d.balance_cents||0, d.deposit_cents||0, d.last_updated||''));
-    };
+      .then(r=>r.json()).then(set).catch(()=>{});
     return;
   }
 
-  // ----- Admin-only UI below -----
-
+  // ----- Admin only -----
   // Last Updated + Share Price controls
-  const settings = document.createElement('div');
-  settings.style.marginTop='16px';
-  settings.innerHTML = `
+  const controls = document.createElement('div');
+  controls.style.marginTop='16px';
+  controls.innerHTML = `
     <div class="row" style="gap:16px; flex-wrap:wrap">
       <div>
         <label>Last Updated (YYYY-MM-DD)</label>
         <input id="lastUpdated" placeholder="2025-08-12" />
       </div>
       <div><button id="saveLU">Save date</button></div>
-    </div>
-    <div class="small" id="curLU" style="margin-top:6px"></div>
-    <div style="height:10px"></div>
-    <div class="row" style="gap:16px; flex-wrap:wrap">
       <div>
         <label>Share Price (USD)</label>
-        <input id="sharePrice" placeholder="10.00" />
+        <input id="sharePrice" placeholder="100.00" />
       </div>
-      <div><button id="saveSP">Save share price</button></div>
+      <div><button id="saveSP">Save price</button></div>
     </div>
-    <div class="small" id="curSP" style="margin-top:6px"></div>
+    <div class="small" id="curMeta" style="margin-top:6px"></div>
   `;
-  app.appendChild(settings);
+  app.appendChild(controls);
 
-  // Load current settings
-  fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token }})
-    .then(r=>r.json()).then(d=>{
-      state.last_updated = d.last_updated || '';
-      settings.querySelector('#curLU').textContent = state.last_updated ? ('Current: '+state.last_updated) : 'Current: (not set)';
-    });
-  fetch('/api/admin/share-price', { headers:{ 'Authorization':'Bearer '+state.token }})
-    .then(r=>r.json()).then(d=>{
-      state.share_price = d.share_price || '';
-      settings.querySelector('#curSP').textContent = state.share_price ? ('Current: $'+state.share_price) : 'Current: (not set)';
-    });
-
-  settings.querySelector('#saveLU').onclick = async ()=>{
-    const val = settings.querySelector('#lastUpdated').value.trim();
-    if(!val) return toast('Enter a date (YYYY-MM-DD)', false);
-    try{
-      const r = await fetch('/api/admin/last-updated', {
-        method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
-        body: JSON.stringify({ last_updated: val })
-      });
-      const d = await r.json();
-      if(!r.ok) throw new Error(d.error || 'Save failed');
-      toast('Last Updated saved');
-      state.last_updated = d.last_updated;
-      settings.querySelector('#curLU').textContent = 'Current: ' + state.last_updated;
-      // update hero
-      document.getElementById('spLU').textContent = 'Last Updated: ' + state.last_updated;
-    }catch(e){ toast(e.message,false); }
+  const refreshMeta = async()=>{
+    const [lu, sp] = await Promise.all([
+      fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token }}).then(r=>r.json()).catch(()=>({})),
+      fetch('/api/admin/share-price', { headers:{ 'Authorization':'Bearer '+state.token }}).then(r=>r.json()).catch(()=>({}))
+    ]);
+    const txt = `Current Last Updated: ${lu.last_updated||'(not set)'} • Share Price: ${sp.share_price!=null?('$'+Number(sp.share_price).toFixed(2)):'(not set)'}`;
+    controls.querySelector('#curMeta').textContent = txt;
   };
+  refreshMeta();
 
-  settings.querySelector('#saveSP').onclick = async ()=>{
-    const val = settings.querySelector('#sharePrice').value.trim();
-    if(!val) return toast('Enter a share price', false);
-    try{
-      const r = await fetch('/api/admin/share-price', {
-        method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
-        body: JSON.stringify({ share_price: val })
-      });
-      const d = await r.json();
-      if(!r.ok) throw new Error(d.error || 'Save failed');
-      toast('Share price saved');
-      state.share_price = d.share_price;
-      settings.querySelector('#curSP').textContent = 'Current: $' + state.share_price;
-      document.getElementById('spVal').textContent = '$' + state.share_price;
-    }catch(e){ toast(e.message,false); }
+  controls.querySelector('#saveLU').onclick = async ()=>{
+    const val = controls.querySelector('#lastUpdated').value.trim();
+    if(!val) return toast('Enter a date (YYYY-MM-DD)', false);
+    const r = await fetch('/api/admin/last-updated', {
+      method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+      body: JSON.stringify({ last_updated: val })
+    });
+    const d = await r.json();
+    if(!r.ok) return toast(d.error||'Save failed', false);
+    toast('Last Updated saved'); refreshMeta();
+  };
+  controls.querySelector('#saveSP').onclick = async ()=>{
+    const val = parseFloat(controls.querySelector('#sharePrice').value.trim());
+    if(Number.isNaN(val)) return toast('Enter a number for share price', false);
+    const r = await fetch('/api/admin/share-price', {
+      method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+      body: JSON.stringify({ share_price: val })
+    });
+    const d = await r.json();
+    if(!r.ok) return toast(d.error||'Save failed', false);
+    toast('Share price saved'); refreshMeta();
   };
 
   // Create User panel
@@ -219,24 +181,18 @@ function render() {
     const email = add.querySelector('#newEmail').value.trim().toLowerCase();
     const password = add.querySelector('#newPass').value.trim();
     if(!email || !password) return toast('Email and password required', false);
-    try{
-      const r = await fetch('/api/admin/users', {
-        method:'POST',
-        headers:{ 'Content-Type': 'application/json', 'Authorization':'Bearer '+state.token },
-        body: JSON.stringify({ email, password })
-      });
-      const d = await r.json();
-      if(!r.ok) throw new Error(d.error || 'Create failed');
-      toast(`User created. Password: ${d.password}`);
-      add.querySelector('#newEmail').value='';
-      add.querySelector('#newPass').value='';
-      fetchUsers();
-    }catch(e){ toast(e.message, false); }
+    const r = await fetch('/api/admin/users', {
+      method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+      body: JSON.stringify({ email, password })
+    });
+    const d = await r.json();
+    if(!r.ok) return toast(d.error||'Create failed', false);
+    toast('User created. Password: '+d.password); fetchUsers();
   };
 
   // Users table
   const tableWrap = document.createElement('div');
-  tableWrap.style.marginTop = '16px';
+  tableWrap.style.marginTop='16px';
   tableWrap.innerHTML = `
     <table>
       <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Balance</th><th>Deposits</th><th>Update</th><th>Actions</th></tr></thead>
@@ -245,19 +201,20 @@ function render() {
   app.appendChild(tableWrap);
 
   const tbody = tableWrap.querySelector('#tbody');
-  for (const u of state.users) {
+  const rowUI = (u)=>{
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${u.id}</td>
       <td>${u.email}</td>
       <td>${u.role}</td>
-      <td>$${(u.balance_cents / 100).toFixed(2)}</td>
-      <td>$${(u.deposit_cents / 100).toFixed(2)}</td>
+      <td>$${(u.balance_cents/100).toFixed(2)}</td>
+      <td>$${(u.deposit_cents/100).toFixed(2)}</td>
       <td>
-        <div class="row" style="flex-wrap:wrap">
-          <input style="max-width:140px" placeholder="New balance (USD)" id="b${u.id}" />
-          <input style="max-width:140px" placeholder="New deposit (USD)" id="d${u.id}" />
-          <button id="s${u.id}">Save</button>
+        <div class="row">
+          <input style="max-width:150px" placeholder="New balance (USD)" id="b${u.id}" />
+          <button id="sb${u.id}">Save</button>
+          <input style="max-width:150px" placeholder="New deposit (USD)" id="d${u.id}" />
+          <button id="sd${u.id}">Save</button>
         </div>
       </td>
       <td class="row" style="gap:8px">
@@ -266,58 +223,57 @@ function render() {
       </td>`;
     tbody.appendChild(tr);
 
-    tr.querySelector('#s' + u.id).onclick = async () => {
-      const valB = tr.querySelector('#b' + u.id).value.trim();
-      const valD = tr.querySelector('#d' + u.id).value.trim();
-      const usdB = valB ? Number(valB.replace(/[^0-9.\-]/g,'')) : null;
-      const usdD = valD ? Number(valD.replace(/[^0-9.\-]/g,'')) : null;
-      try{
-        if (usdB !== null && Number.isFinite(usdB)) {{
-          const r = await fetch('/api/admin/users/' + u.id + '/balance', {{
-            method: 'PATCH',
-            headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token }},
-            body: JSON.stringify({{ balance_cents: Math.round(usdB * 100) }})
-          }});
-          if(!r.ok) throw new Error('Balance update failed');
-        }}
-        if (usdD !== null && Number.isFinite(usdD)) {{
-          const r2 = await fetch('/api/admin/users/' + u.id + '/deposit', {{
-            method: 'PATCH',
-            headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token }},
-            body: JSON.stringify({{ deposit_cents: Math.round(usdD * 100) }})
-          }});
-          if(!r2.ok) throw new Error('Deposit update failed');
-        }}
-        toast('Saved');
-        fetchUsers();
-      }}catch(e){{ toast(e.message, false); }}
+    tr.querySelector('#sb'+u.id).onclick = async ()=>{
+      const val = tr.querySelector('#b'+u.id).value.trim();
+      const usd = Number(val.replace(/[^0-9.\-]/g,''));
+      if(!Number.isFinite(usd)) return toast('Enter numeric USD', false);
+      const r = await fetch('/api/admin/users/'+u.id+'/balance', {
+        method:'PATCH', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+        body: JSON.stringify({ balance_cents: Math.round(usd*100) })
+      });
+      const d = await r.json();
+      if(!r.ok) return toast(d.error||'Update failed', false);
+      toast('Balance updated'); fetchUsers();
     };
-
-    tr.querySelector('#reset'+u.id).onclick = async () => {
+    tr.querySelector('#sd'+u.id).onclick = async ()=>{
+      const val = tr.querySelector('#d'+u.id).value.trim();
+      const usd = Number(val.replace(/[^0-9.\-]/g,''));
+      if(!Number.isFinite(usd)) return toast('Enter numeric USD', false);
+      const r = await fetch('/api/admin/users/'+u.id+'/deposit', {
+        method:'PATCH', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+        body: JSON.stringify({ deposit_cents: Math.round(usd*100) })
+      });
+      const d = await r.json();
+      if(!r.ok) return toast(d.error||'Update failed', false);
+      toast('Deposit updated'); fetchUsers();
+    };
+    tr.querySelector('#reset'+u.id).onclick = async ()=>{
       if(!confirm('Reset password to a new six-digit code?')) return;
-      try{
-        const r = await fetch('/api/admin/users/'+u.id+'/reset-password', {
-          method:'POST', headers:{ 'Authorization':'Bearer '+state.token }
-        });
-        const d = await r.json();
-        if(!r.ok) throw new Error(d.error || 'Reset failed');
-        toast('New password: '+d.password);
-      }catch(e){ toast(e.message,false); }
+      const r = await fetch('/api/admin/users/'+u.id+'/reset-password', {
+        method:'POST', headers:{ 'Authorization':'Bearer '+state.token }
+      });
+      const d = await r.json();
+      if(!r.ok) return toast(d.error||'Reset failed', false);
+      toast('New password: '+d.password);
     };
+    tr.querySelector('#del'+u.id).onclick = async ()=>{
+      if(!confirm('Delete this user?')) return;
+      const r = await fetch('/api/admin/users/'+u.id, {
+        method:'DELETE', headers:{ 'Authorization':'Bearer '+state.token }
+      });
+      const d = await r.json();
+      if(!r.ok) return toast(d.error||'Delete failed', false);
+      toast('User deleted'); fetchUsers();
+    };
+  };
 
-    tr.querySelector('#del'+u.id).onclick = async () => {
-      if(!confirm('Delete this user? This cannot be undone.')) return;
-      try{
-        const r = await fetch('/api/admin/users/'+u.id, {
-          method:'DELETE', headers:{ 'Authorization':'Bearer '+state.token }
-        });
-        const d = await r.json();
-        if(!r.ok) throw new Error(d.error || 'Delete failed');
-        toast('User deleted');
-        fetchUsers();
-      }catch(e){ toast(e.message,false); }
-    };
+  async function fetchUsers(){
+    const r = await fetch('/api/admin/users', { headers:{ 'Authorization':'Bearer '+state.token }});
+    const list = await r.json();
+    tbody.innerHTML = '';
+    list.forEach(rowUI);
   }
+  fetchUsers();
 }
 
 function loginSubmit(form){
@@ -325,31 +281,14 @@ function loginSubmit(form){
     e.preventDefault();
     const email = form.querySelector('#email').value.trim();
     const password = form.querySelector('#password').value;
-    try{
-      const r = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'Login failed');
-      state.token = data.token;
-      state.user = data.user;
-      render();
-      if (state.user.role === 'admin') fetchUsers();
-    }catch(err){
-      toast(err.message, false);
-    }
+    const r = await fetch('/api/auth/login', {
+      method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const d = await r.json();
+    if(!r.ok) return toast(d.error||'Login failed', false);
+    state.token = d.token; state.user = d.user; render();
   };
-}
-
-async function fetchUsers() {
-  try{
-    const r = await fetch('/api/admin/users', { headers: { 'Authorization': 'Bearer ' + state.token } });
-    if(!r.ok) throw new Error('Failed to fetch users');
-    state.users = await r.json();
-    render();
-  }catch(e){ toast(e.message, false); }
 }
 
 render();
