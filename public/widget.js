@@ -1,4 +1,3 @@
-
 (function(){
   class BalanceWidget extends HTMLElement{
     constructor(){
