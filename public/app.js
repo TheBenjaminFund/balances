@@ -13,12 +13,18 @@ function toast(msg, ok=true){
   setTimeout(()=> t.remove(), 2200);
 }
 
-const fmtUSD = (cents)=> new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2}).format((cents||0)/100);
-const fmtPct = (n)=> (n>0?'+':'') + n.toFixed(2) + '%';
+// Load share price hero
+(async function loadShare(){
+  try{
+    const r = await fetch('/api/share-price');
+    const d = await r.json();
+    document.getElementById('spVal').textContent = d.share_price ? ('$' + d.share_price) : '$—';
+    document.getElementById('spLU').textContent = d.last_updated ? ('Last Updated: ' + d.last_updated) : '';
+  }catch{}
+})();
 
-// Admin/User SPA with RBAC
-const state = { token: null, user: null, users: [], last_updated: null };
-
+// App state
+const state = { token: null, user: null, users: [], last_updated: null, share_price: null };
 const app = document.getElementById('app');
 
 function render() {
@@ -57,79 +63,74 @@ function render() {
   app.appendChild(hdr);
 
   if (state.user.role !== 'admin') {
-    // Non-admin view: three stat tiles + last updated + refresh
+    // Non-admin view: stat tiles
     const wrap = document.createElement('div');
-    const stats = document.createElement('div');
-    stats.className = 'stats';
-    stats.innerHTML = `
-      <div class="stat">
-        <div class="label">Current Balance</div>
-        <div id="val-balance" class="value balance">$0.00</div>
+    wrap.style.marginTop='16px';
+    wrap.innerHTML = `
+      <div class="row" style="gap:16px; flex-wrap:wrap; align-items:flex-end">
+        <div><strong>Your balance</strong></div>
+        <div id="bal" class="big-balance">$0.00</div>
       </div>
-      <div class="stat">
-        <div class="label">Deposits</div>
-        <div id="val-deposits" class="value medium">$0.00</div>
+      <div class="small" id="lu" style="margin-top:6px; color:#cfcfcf"></div>
+      <div class="stats">
+        <div class="stat">
+          <div class="label">Balance</div>
+          <div class="value" id="vBal">$0.00</div>
+          <div class="sub">Current USD balance</div>
+        </div>
+        <div class="stat">
+          <div class="label">Deposits</div>
+          <div class="value" id="vDep">$0.00</div>
+          <div class="sub">Total invested with fund</div>
+        </div>
+        <div class="stat">
+          <div class="label">Performance</div>
+          <div class="value" id="vPerf">—</div>
+          <div class="sub">Since initial deposit</div>
+        </div>
       </div>
-      <div class="stat">
-        <div class="label">Performance</div>
-        <div id="val-perf" class="value performance">—</div>
-        <div class="sub" id="perf-sub"></div>
-      </div>
+      <div style="margin-top:12px"><button id="refresh">Refresh</button></div>
     `;
-    wrap.appendChild(stats);
-
-    const meta = document.createElement('div');
-    meta.innerHTML = `
-      <div class="separator"></div>
-      <div class="row" style="justify-content:space-between;flex-wrap:wrap">
-        <div class="small" id="lu"></div>
-        <button id="refresh">Refresh</button>
-      </div>`;
-    wrap.appendChild(meta);
-    wrap.style.marginTop = '16px';
     app.appendChild(wrap);
 
-    const elBal = stats.querySelector('#val-balance');
-    const elDep = stats.querySelector('#val-deposits');
-    const elPerf = stats.querySelector('#val-perf');
-    const elPerfSub = stats.querySelector('#perf-sub');
-    const elLU = meta.querySelector('#lu');
-
-    function populate(d){
-      const balC = d.balance_cents||0;
-      const depC = d.deposit_cents||0;
-      elBal.textContent = fmtUSD(balC);
-      elDep.textContent = fmtUSD(depC);
-      if (depC > 0){
-        const pct = ((balC - depC) / depC) * 100;
-        elPerf.textContent = fmtPct(pct);
-        elPerf.classList.remove('value--good','value--bad');
-        elPerf.classList.add(pct >= 0 ? 'value--good' : 'value--bad','performance');
-        elPerfSub.textContent = (pct>=0?'+':'') + fmtUSD(balC - depC) + ' overall';
+    const fmt = (cents)=> '$'+(cents/100).toFixed(2);
+    const setAll = (bal, dep, lu)=>{
+      document.getElementById('bal').textContent = fmt(bal);
+      document.getElementById('vBal').textContent = fmt(bal);
+      document.getElementById('vDep').textContent = fmt(dep);
+      document.getElementById('lu').textContent = lu ? ('Last Updated: '+lu) : '';
+      const perfEl = document.getElementById('vPerf');
+      if (dep > 0){
+        const pct = ((bal - dep) / dep) * 100;
+        const sign = pct >= 0 ? '+' : '';
+        perfEl.textContent = sign + pct.toFixed(2) + '%';
+        perfEl.className = 'value ' + (pct >= 0 ? 'gain' : 'loss');
       } else {
-        elPerf.textContent = '—';
-        elPerf.classList.remove('value--good','value--bad');
-        elPerfSub.textContent = 'Add a deposit to see performance';
+        perfEl.textContent = '—';
+        perfEl.className = 'value';
       }
-      elLU.textContent = d.last_updated ? ('Last Updated: ' + d.last_updated) : '';
-    }
+    };
 
-    function loadMe(){
+    // Fetch current data
+    fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
+      .then(r=>r.json())
+      .then(d=> setAll(d.balance_cents||0, d.deposit_cents||0, d.last_updated||''))
+      .catch(()=>{});
+
+    document.getElementById('refresh').onclick = ()=>{
       fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token }})
-        .then(r=>r.json()).then(populate).catch(()=>{});
-    }
-
-    meta.querySelector('#refresh').onclick = loadMe;
-    loadMe();
+        .then(r=>r.json())
+        .then(d=> setAll(d.balance_cents||0, d.deposit_cents||0, d.last_updated||''));
+    };
     return;
   }
 
   // ----- Admin-only UI below -----
 
-  // Last Updated control
-  const lu = document.createElement('div');
-  lu.style.marginTop='16px';
-  lu.innerHTML = `
+  // Last Updated + Share Price controls
+  const settings = document.createElement('div');
+  settings.style.marginTop='16px';
+  settings.innerHTML = `
     <div class="row" style="gap:16px; flex-wrap:wrap">
       <div>
         <label>Last Updated (YYYY-MM-DD)</label>
@@ -138,27 +139,62 @@ function render() {
       <div><button id="saveLU">Save date</button></div>
     </div>
     <div class="small" id="curLU" style="margin-top:6px"></div>
+    <div style="height:10px"></div>
+    <div class="row" style="gap:16px; flex-wrap:wrap">
+      <div>
+        <label>Share Price (USD)</label>
+        <input id="sharePrice" placeholder="10.00" />
+      </div>
+      <div><button id="saveSP">Save share price</button></div>
+    </div>
+    <div class="small" id="curSP" style="margin-top:6px"></div>
   `;
-  app.appendChild(lu);
+  app.appendChild(settings);
 
+  // Load current settings
   fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token }})
     .then(r=>r.json()).then(d=>{
-      lu.querySelector('#curLU').textContent = d.last_updated ? ('Current: '+d.last_updated) : 'Current: (not set)';
+      state.last_updated = d.last_updated || '';
+      settings.querySelector('#curLU').textContent = state.last_updated ? ('Current: '+state.last_updated) : 'Current: (not set)';
+    });
+  fetch('/api/admin/share-price', { headers:{ 'Authorization':'Bearer '+state.token }})
+    .then(r=>r.json()).then(d=>{
+      state.share_price = d.share_price || '';
+      settings.querySelector('#curSP').textContent = state.share_price ? ('Current: $'+state.share_price) : 'Current: (not set)';
     });
 
-  lu.querySelector('#saveLU').onclick = async ()=>{
-    const val = lu.querySelector('#lastUpdated').value.trim();
+  settings.querySelector('#saveLU').onclick = async ()=>{
+    const val = settings.querySelector('#lastUpdated').value.trim();
     if(!val) return toast('Enter a date (YYYY-MM-DD)', false);
     try{
       const r = await fetch('/api/admin/last-updated', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+        method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
         body: JSON.stringify({ last_updated: val })
       });
       const d = await r.json();
       if(!r.ok) throw new Error(d.error || 'Save failed');
       toast('Last Updated saved');
-      lu.querySelector('#curLU').textContent = 'Current: ' + d.last_updated;
+      state.last_updated = d.last_updated;
+      settings.querySelector('#curLU').textContent = 'Current: ' + state.last_updated;
+      // update hero
+      document.getElementById('spLU').textContent = 'Last Updated: ' + state.last_updated;
+    }catch(e){ toast(e.message,false); }
+  };
+
+  settings.querySelector('#saveSP').onclick = async ()=>{
+    const val = settings.querySelector('#sharePrice').value.trim();
+    if(!val) return toast('Enter a share price', false);
+    try{
+      const r = await fetch('/api/admin/share-price', {
+        method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+        body: JSON.stringify({ share_price: val })
+      });
+      const d = await r.json();
+      if(!r.ok) throw new Error(d.error || 'Save failed');
+      toast('Share price saved');
+      state.share_price = d.share_price;
+      settings.querySelector('#curSP').textContent = 'Current: $' + state.share_price;
+      document.getElementById('spVal').textContent = '$' + state.share_price;
     }catch(e){ toast(e.message,false); }
   };
 
@@ -203,7 +239,7 @@ function render() {
   tableWrap.style.marginTop = '16px';
   tableWrap.innerHTML = `
     <table>
-      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Deposits</th><th>Balance</th><th>Update</th><th>Actions</th></tr></thead>
+      <thead><tr><th>ID</th><th>Email</th><th>Role</th><th>Balance</th><th>Deposits</th><th>Update</th><th>Actions</th></tr></thead>
       <tbody id="tbody"></tbody>
     </table>`;
   app.appendChild(tableWrap);
@@ -215,12 +251,12 @@ function render() {
       <td>${u.id}</td>
       <td>${u.email}</td>
       <td>${u.role}</td>
-      <td>$${((u.deposit_cents||0) / 100).toFixed(2)}</td>
       <td>$${(u.balance_cents / 100).toFixed(2)}</td>
+      <td>$${(u.deposit_cents / 100).toFixed(2)}</td>
       <td>
-        <div class="row" style="flex-wrap:wrap; gap:8px">
-          <input style="max-width:140px" placeholder="New deposit (USD)" id="d${u.id}" />
+        <div class="row" style="flex-wrap:wrap">
           <input style="max-width:140px" placeholder="New balance (USD)" id="b${u.id}" />
+          <input style="max-width:140px" placeholder="New deposit (USD)" id="d${u.id}" />
           <button id="s${u.id}">Save</button>
         </div>
       </td>
@@ -231,34 +267,30 @@ function render() {
     tbody.appendChild(tr);
 
     tr.querySelector('#s' + u.id).onclick = async () => {
-      const depVal = tr.querySelector('#d' + u.id).value.trim();
-      const balVal = tr.querySelector('#b' + u.id).value.trim();
-      const dep = depVal? Number(depVal.replace(/[^0-9.\-]/g,'')) : null;
-      const bal = balVal? Number(balVal.replace(/[^0-9.\-]/g,'')) : null;
-      if (depVal && !Number.isFinite(dep)) return toast('Deposit must be a number', false);
-      if (balVal && !Number.isFinite(bal)) return toast('Balance must be a number', false);
+      const valB = tr.querySelector('#b' + u.id).value.trim();
+      const valD = tr.querySelector('#d' + u.id).value.trim();
+      const usdB = valB ? Number(valB.replace(/[^0-9.\-]/g,'')) : null;
+      const usdD = valD ? Number(valD.replace(/[^0-9.\-]/g,'')) : null;
       try{
-        // PATCH balance
-        if (balVal){
-          const r1 = await fetch('/api/admin/users/' + u.id + '/balance', {
+        if (usdB !== null && Number.isFinite(usdB)) {{
+          const r = await fetch('/api/admin/users/' + u.id + '/balance', {{
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token },
-            body: JSON.stringify({ balance_cents: Math.round(bal * 100) })
-          });
-          if(!r1.ok) throw new Error('Balance update failed');
-        }
-        // PATCH deposit (assumes endpoint exists in your current server)
-        if (depVal){
-          const r2 = await fetch('/api/admin/users/' + u.id + '/deposit', {
+            headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token }},
+            body: JSON.stringify({{ balance_cents: Math.round(usdB * 100) }})
+          }});
+          if(!r.ok) throw new Error('Balance update failed');
+        }}
+        if (usdD !== null && Number.isFinite(usdD)) {{
+          const r2 = await fetch('/api/admin/users/' + u.id + '/deposit', {{
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token },
-            body: JSON.stringify({ deposit_cents: Math.round(dep * 100) })
-          });
+            headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + state.token }},
+            body: JSON.stringify({{ deposit_cents: Math.round(usdD * 100) }})
+          }});
           if(!r2.ok) throw new Error('Deposit update failed');
-        }
+        }}
         toast('Saved');
         fetchUsers();
-      }catch(e){ toast(e.message, false); }
+      }}catch(e){{ toast(e.message, false); }}
     };
 
     tr.querySelector('#reset'+u.id).onclick = async () => {
@@ -279,7 +311,8 @@ function render() {
         const r = await fetch('/api/admin/users/'+u.id, {
           method:'DELETE', headers:{ 'Authorization':'Bearer '+state.token }
         });
-        if(!r.ok) throw new Error('Delete failed');
+        const d = await r.json();
+        if(!r.ok) throw new Error(d.error || 'Delete failed');
         toast('User deleted');
         fetchUsers();
       }catch(e){ toast(e.message,false); }

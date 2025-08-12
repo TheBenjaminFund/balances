@@ -1,17 +1,13 @@
 
-# The Benjamin Fund – Balance App (v3)
+# The Benjamin Fund – Balance App (v4)
 
-What's new:
-- **Deposits** per user (admin can set)
-- **Performance %** shown to users = (Balance - Deposits) / Deposits
-- Bigger balance emphasis
-- Last Updated date (admin-set) still supported
-- RBAC, CSP-safe, and Benjamin Fund theme
+- Clean stat UI (Balance / Deposits / Performance), bigger typography
+- Admin can set: Last Updated date, Share Price
+- Landing hero shows Share Price + Last Updated and support email
+- Admin: create users (shows password), reset password (6-digit), delete user, edit balances/deposits
+- RBAC, CSP-safe, Benjamin Fund theme
 
-## Deploy
-1) `npm install`
-2) Set env vars in Render: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`
-3) `npm start`
-
-## Notes
-- For existing deployments: the app auto-adds `deposit_cents` to the `users` table if missing.
+## Deploy on Render
+- Build: `npm install`
+- Start: `npm start`
+- Env vars: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`

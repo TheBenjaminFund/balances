@@ -1,8 +1,5 @@
 
 (function(){
-  const fmtUSD = (c)=> new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format((c||0)/100);
-  const fmtPct = (n)=> (n>0?'+':'') + n.toFixed(2) + '%';
-
   class BalanceWidget extends HTMLElement{
     constructor(){
       super();
@@ -17,7 +14,7 @@
         body: JSON.stringify({ email, password })
       });
       const data = await r.json();
-      if(r.ok){ this.setState({ token:data.token, user:data.user, balance_cents:data.balance_cents }); this.me(); }
+      if(r.ok){ this.setState({ token:data.token, user:data.user, balance_cents:data.balance_cents, deposit_cents:data.deposit_cents, last_updated:data.last_updated }); }
       else alert(data.error || 'Login failed');
     }
     async me(){
@@ -25,52 +22,56 @@
       if(r.ok){ const d = await r.json(); this.setState({ user:d.user, balance_cents:d.balance_cents, deposit_cents:d.deposit_cents, last_updated:d.last_updated }); }
     }
     render(){
-      const bal = this.state.balance_cents||0;
-      const dep = this.state.deposit_cents||0;
-      const perf = dep>0 ? ((bal-dep)/dep)*100 : null;
-      const perfClass = perf==null ? '' : (perf>=0?'value--good':'value--bad');
-
+      const usd = '$' + (this.state.balance_cents/100).toFixed(2);
+      const dep = '$' + (this.state.deposit_cents/100).toFixed(2);
+      let perf = '—', cls = '';
+      if (this.state.deposit_cents > 0){
+        const pct = ((this.state.balance_cents - this.state.deposit_cents)/this.state.deposit_cents)*100;
+        const sign = pct >= 0 ? '+' : '';
+        perf = sign + pct.toFixed(2) + '%';
+        cls = pct >= 0 ? 'gain' : 'loss';
+      }
       this.shadowRoot.innerHTML = `
         <style>
-          :root{ --accent:#04a156; --danger:#ef4444; }
-          :host{ display:block; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif; }
-          .card{ background:#1e1e1e; color:#ffffff; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,.35); padding:18px; max-width:520px }
+          :host{ display:block; font-family: inherit; }
+          .card{ background:#1e1e1e; color:#ffffff; border-radius:16px; box-shadow:0 10px 25px rgba(0,0,0,.35); padding:16px; max-width:520px }
           label{ display:block; font-size:12px; color:#cfcfcf; margin-bottom:6px }
           input{ background:#151515; border:1px solid #2b2b2b; color:#ffffff; border-radius:12px; padding:10px 12px; width:100% }
-          button{ border:0; border-radius:12px; padding:10px 14px; cursor:pointer; background:#04a156; color:white; box-shadow:0 6px 16px rgba(4,161,86,.35); font-weight:600 }
-          .row{ display:flex; gap:8px; align-items:center; flex-wrap:wrap }
+          button{ border:0; border-radius:12px; padding:10px 14px; cursor:pointer; background:#04a156; color:white; box-shadow:0 6px 16px rgba(4,161,86,.35) }
+          .row{ display:flex; gap:8px; align-items:center }
+          .balance{ font-size:44px; font-weight:800; margin:8px 0 0; letter-spacing:.2px }
           .muted{ color:#cfcfcf; font-size:12px }
-          .stats{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:10px }
-          @media (max-width:560px){ .stats{ grid-template-columns:1fr; } }
-          .stat{ background:#1b1b1b; border:1px solid #2b2b2b; border-radius:12px; padding:14px; }
-          .label{ color:#bdbdbd; font-size:11px; letter-spacing:.4px; text-transform:uppercase }
-          .value{ font-weight:800; margin-top:4px }
-          .value.balance{ font-size:42px; line-height:1.05 }
-          .value.medium{ font-size:22px }
-          .value.performance{ font-size:28px }
-          .value--good{ color: var(--accent) }
-          .value--bad{ color: var(--danger) }
-          .sub{ color:#9a9a9a; font-size:12px; margin-top:8px }
+          .stats{ display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:12px; margin-top:12px }
+          .stat{ background:#1c1c1c; border:1px solid #2b2b2b; border-radius:14px; padding:12px }
+          .stat .label{ font-size:12px; color:#cfcfcf }
+          .stat .value{ font-size:18px; font-weight:700; margin-top:4px }
+          .stat .sub{ font-size:12px; color:#9a9a9a; margin-top:2px }
+          .gain{ color:#3ae08e } .loss{ color:#ff6b6b }
+          @media (max-width:520px){ .stats{ grid-template-columns: 1fr; } }
         </style>
         <div class="card">
           ${this.state.token ? `
             <div class="muted">Logged in as ${this.state.user?.email || ''}</div>
+            <div class="balance">${usd}</div>
+            <div class="muted">Current USD balance</div>
+            ${this.state.last_updated ? `<div class="muted" style="margin-top:6px">Last Updated: ${this.state.last_updated}</div>` : ''}
             <div class="stats">
               <div class="stat">
-                <div class="label">Current Balance</div>
-                <div class="value balance">${fmtUSD(bal)}</div>
+                <div class="label">Balance</div>
+                <div class="value">${usd}</div>
+                <div class="sub">Current</div>
               </div>
               <div class="stat">
                 <div class="label">Deposits</div>
-                <div class="value medium">${fmtUSD(dep)}</div>
+                <div class="value">${dep}</div>
+                <div class="sub">Total invested</div>
               </div>
               <div class="stat">
                 <div class="label">Performance</div>
-                <div class="value performance ${perfClass}">${perf==null?'—':fmtPct(perf)}</div>
-                <div class="sub">${dep>0 ? ((perf>=0?'+':'')+fmtUSD(bal-dep)+' overall') : 'Add a deposit to see performance'}</div>
+                <div class="value ${cls}">${perf}</div>
+                <div class="sub">Since deposit</div>
               </div>
             </div>
-            ${this.state.last_updated ? `<div class="muted" style="margin-top:10px">Last Updated: ${this.state.last_updated}</div>` : ''}
             <div style="margin-top:12px" class="row">
               <button id="refresh">Refresh</button>
               <button id="logout" style="background:#333333">Log out</button>
