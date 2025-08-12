@@ -1,6 +1,6 @@
 {
-  "name": "benjamin-balance-app",
-  "version": "1.1.0",
+  "name": "benjamin-fund-balance-app",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {

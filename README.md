@@ -1,18 +1,19 @@
 
-# The Benjamin Fund – Balance App
+# The Benjamin Fund – Balance App (Full Package)
 
-Admin can create users and edit balances. Users log in via an embeddable widget.
+## What’s included
+- Benjamin Fund theme (#1e1e1e / #ffffff / #04a156)
+- Admin: Create user (returns password once), Reset password (six digits), Delete user
+- RBAC: Users see only their own balance; Admin sees full controls
+- CSP-safe (all JS external)
 
-## Deploy (Render)
+## Deploy on Render
 - Build: `npm install`
 - Start: `npm start`
-- Env:
-  - `ADMIN_EMAIL`
-  - `ADMIN_PASSWORD`
-  - `JWT_SECRET`
+- Env vars: `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`
 
-## Embedding
-Use the snippet shown on the home page after deploy, or:
+## Embed
+After deploy, copy the snippet shown on the homepage, or:
 ```html
 <script src="https://YOUR-APP.onrender.com/widget.js"></script>
 <balance-widget data-base-url="https://YOUR-APP.onrender.com"></balance-widget>

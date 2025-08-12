@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -16,9 +15,9 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'KuotBxZ9A95tjMyfpWr1TlZonHxjg6EcJ0gbenJyKzo';
+const JWT_SECRET = process.env.JWT_SECRET || '9LYpR2x-mWmkop2s8xjGw1Q81girdX5lcSEdipnvxbA';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'matthew.benjamin@thebenjaminfund.org').toLowerCase();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'fX1oIXoe1wfmmP-P5qxqMQ';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'w3MUoxpBRsHDA2LHQH2Twg';
 
 app.use(helmet());
 app.use(express.json());
@@ -27,7 +26,7 @@ app.use(cors({ origin: true, credentials: true }));
 const dbFile = path.join(__dirname, 'data.sqlite');
 const db = new sqlite3.Database(dbFile);
 
-// Initialize and seed admin
+// Initialize & seed admin
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,13 +41,9 @@ db.serialize(() => {
     if (err) { console.error(err); return; }
     if (!row) {
       const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-      db.run(
-        "INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
+      db.run("INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
         [ADMIN_EMAIL, hash, 'admin', 0],
-        (e) => {
-          if (e) console.error("Admin seed error", e);
-          else console.log("Seeded admin:", ADMIN_EMAIL);
-        }
+        (e) => { if (e) console.error("Admin seed error", e); else console.log("Seeded admin:", ADMIN_EMAIL); }
       );
     } else {
       console.log("Admin exists:", ADMIN_EMAIL);
@@ -65,7 +60,7 @@ function auth(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Missing token' });
   try { req.user = jwt.verify(token, JWT_SECRET); next(); }
-  catch (e) { return res.status(401).json({ error: 'Invalid token' }); }
+  catch { return res.status(401).json({ error: 'Invalid token' }); }
 }
 function adminOnly(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -107,7 +102,7 @@ app.get('/api/me', auth, (req, res) => {
   });
 });
 
-// Admin
+// Admin endpoints
 app.get('/api/admin/users', auth, adminOnly, (req, res) => {
   db.all("SELECT id, email, role, balance_cents, created_at FROM users ORDER BY created_at DESC", [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB error' });
@@ -123,8 +118,30 @@ app.post('/api/admin/users', auth, adminOnly, (req, res) => {
     [email.toLowerCase(), hash, role, 0],
     function(err) {
       if (err) return res.status(400).json({ error: 'User exists or invalid' });
-      res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0 });
+      // Return the plaintext password once so admin can copy
+      res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0, password });
     });
+});
+
+app.post('/api/admin/users/:id/reset-password', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Bad id' });
+  const newPass = Math.floor(100000 + Math.random()*900000).toString().padStart(6,'0'); // six-digit
+  const hash = bcrypt.hashSync(newPass, 10);
+  db.run("UPDATE users SET password_hash = ? WHERE id = ?", [hash, id], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ updated: this.changes > 0, password: newPass });
+  });
+});
+
+app.delete('/api/admin/users/:id', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Bad id' });
+  if (id === req.user.sub) return res.status(400).json({ error: 'Cannot delete your own admin user' });
+  db.run("DELETE FROM users WHERE id = ?", [id], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ deleted: this.changes > 0 });
+  });
 });
 
 app.patch('/api/admin/users/:id/balance', auth, adminOnly, (req, res) => {
@@ -132,16 +149,6 @@ app.patch('/api/admin/users/:id/balance', auth, adminOnly, (req, res) => {
   const { balance_cents } = req.body || {};
   if (Number.isNaN(id) || !Number.isFinite(balance_cents)) return res.status(400).json({ error: 'Bad input' });
   db.run("UPDATE users SET balance_cents = ? WHERE id = ?", [Math.round(balance_cents), id], function(err) {
-    if (err) return res.status(500).json({ error: 'DB error' });
-    res.json({ updated: this.changes > 0 });
-  });
-});
-
-app.post('/api/admin/reset-password', auth, adminOnly, (req, res) => {
-  const { email, new_password } = req.body || {};
-  if (!email || !new_password) return res.status(400).json({ error: 'Email and new_password required' });
-  const hash = bcrypt.hashSync(new_password, 10);
-  db.run("UPDATE users SET password_hash = ? WHERE email = ?", [hash, email.toLowerCase()], function(err) {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json({ updated: this.changes > 0 });
   });
