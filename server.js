@@ -16,9 +16,9 @@ const __dirname = path.dirname(__filename);
 dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || '4RZOZU7x4mUUrh60cNJPSYPzGb0TVydhieeSE0FynvM';
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'matthew.benjamin@thebenjaminfund.org';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '7ZufzZMeHo-rGNIRuIgLOg';
+const JWT_SECRET = process.env.JWT_SECRET || 'KuotBxZ9A95tjMyfpWr1TlZonHxjg6EcJ0gbenJyKzo';
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'matthew.benjamin@thebenjaminfund.org').toLowerCase();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'fX1oIXoe1wfmmP-P5qxqMQ';
 
 app.use(helmet());
 app.use(express.json());
@@ -27,7 +27,7 @@ app.use(cors({ origin: true, credentials: true }));
 const dbFile = path.join(__dirname, 'data.sqlite');
 const db = new sqlite3.Database(dbFile);
 
-// Init DB + seed admin
+// Initialize and seed admin
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,43 +60,35 @@ db.serialize(() => {
 function signToken(user) {
   return jwt.sign({ sub: user.id, role: user.role, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
 }
-
 function auth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Missing token' });
-  try {
-    req.user = jwt.verify(token, JWT_SECRET);
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: 'Invalid token' });
-  }
+  try { req.user = jwt.verify(token, JWT_SECRET); next(); }
+  catch (e) { return res.status(401).json({ error: 'Invalid token' }); }
 }
-
 function adminOnly(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   next();
 }
 
-// Routes
+// Public auth
 app.post('/api/auth/register', (req, res) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   const hash = bcrypt.hashSync(password, 10);
-  db.run(
-    "INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
+  db.run("INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
     [email.toLowerCase(), hash, 'user', 0],
-    function (err) {
+    function(err) {
       if (err) return res.status(400).json({ error: 'User exists or invalid' });
       const user = { id: this.lastID, email: email.toLowerCase(), role: 'user' };
       const token = signToken(user);
-      res.json({ token, user: { id: user.id, email: user.email, role: 'user' }, balance_cents: 0 });
-    }
-  );
+      res.json({ token, user, balance_cents: 0 });
+    });
 });
 
 app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   db.get("SELECT * FROM users WHERE email = ?", [email.toLowerCase()], (err, row) => {
     if (err || !row) return res.status(401).json({ error: 'Invalid credentials' });
@@ -123,53 +115,43 @@ app.get('/api/admin/users', auth, adminOnly, (req, res) => {
   });
 });
 
+app.post('/api/admin/users', auth, adminOnly, (req, res) => {
+  const { email, password, role = 'user' } = req.body || {};
+  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  const hash = bcrypt.hashSync(password, 10);
+  db.run("INSERT INTO users (email, password_hash, role, balance_cents) VALUES (?,?,?,?)",
+    [email.toLowerCase(), hash, role, 0],
+    function(err) {
+      if (err) return res.status(400).json({ error: 'User exists or invalid' });
+      res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0 });
+    });
+});
+
 app.patch('/api/admin/users/:id/balance', auth, adminOnly, (req, res) => {
-  let body = '';
-  req.on('data', chunk => body += chunk);
-  req.on('end', () => {
-    try {
-      const data = JSON.parse(body || '{}');
-      const id = parseInt(req.params.id, 10);
-      const balance_cents = Math.round(Number(data.balance_cents));
-      if (Number.isNaN(id) || !Number.isFinite(balance_cents)) return res.status(400).json({ error: 'Bad input' });
-      db.run("UPDATE users SET balance_cents = ? WHERE id = ?", [balance_cents, id], function(err) {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        res.json({ updated: this.changes > 0 });
-      });
-    } catch(e) {
-      res.status(400).json({ error: 'Invalid JSON' });
-    }
+  const id = parseInt(req.params.id, 10);
+  const { balance_cents } = req.body || {};
+  if (Number.isNaN(id) || !Number.isFinite(balance_cents)) return res.status(400).json({ error: 'Bad input' });
+  db.run("UPDATE users SET balance_cents = ? WHERE id = ?", [Math.round(balance_cents), id], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ updated: this.changes > 0 });
   });
 });
 
 app.post('/api/admin/reset-password', auth, adminOnly, (req, res) => {
-  let body='';
-  req.on('data', c => body += c);
-  req.on('end', () => {
-    try {
-      const data = JSON.parse(body || '{}');
-      const email = (data.email||'').toLowerCase();
-      const new_password = data.new_password;
-      if (!email || !new_password) return res.status(400).json({ error: 'Email and new_password required' });
-      const hash = bcrypt.hashSync(new_password, 10);
-      db.run("UPDATE users SET password_hash = ? WHERE email = ?", [hash, email], function(err) {
-        if (err) return res.status(500).json({ error: 'DB error' });
-        res.json({ updated: this.changes > 0 });
-      });
-    } catch(e) {
-      res.status(400).json({ error: 'Invalid JSON' });
-    }
+  const { email, new_password } = req.body || {};
+  if (!email || !new_password) return res.status(400).json({ error: 'Email and new_password required' });
+  const hash = bcrypt.hashSync(new_password, 10);
+  db.run("UPDATE users SET password_hash = ? WHERE email = ?", [hash, email.toLowerCase()], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ updated: this.changes > 0 });
   });
 });
 
 // Static
 app.use(express.static(path.join(__dirname, 'public')));
-
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
-  if (!fs.existsSync(indexPath)) {
-    return res.status(500).send('public/index.html not found');
-  }
+  if (!fs.existsSync(indexPath)) return res.status(500).send('public/index.html not found');
   res.sendFile(indexPath);
 });
 

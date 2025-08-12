@@ -1,3 +1,4 @@
+
 (function(){
   class BalanceWidget extends HTMLElement{
     constructor(){
@@ -25,13 +26,13 @@
       this.shadowRoot.innerHTML = `
         <style>
           :host{ display:block; font-family: inherit; }
-          .card{ background:#0f172a; color:#e2e8f0; border-radius:14px; box-shadow:0 10px 25px rgba(0,0,0,.25); padding:16px; max-width:420px }
-          label{ display:block; font-size:12px; color:#94a3b8; margin-bottom:6px }
-          input{ background:#0b1b35; border:1px solid #1e293b; color:#e2e8f0; border-radius:12px; padding:10px 12px; width:100% }
-          button{ border:0; border-radius:12px; padding:10px 14px; cursor:pointer; background:#2563eb; color:white; box-shadow:0 6px 16px rgba(37,99,235,.4) }
+          .card{ background:#1e1e1e; color:#ffffff; border-radius:14px; box-shadow:0 10px 25px rgba(0,0,0,.35); padding:16px; max-width:420px }
+          label{ display:block; font-size:12px; color:#cfcfcf; margin-bottom:6px }
+          input{ background:#151515; border:1px solid #2b2b2b; color:#ffffff; border-radius:12px; padding:10px 12px; width:100% }
+          button{ border:0; border-radius:12px; padding:10px 14px; cursor:pointer; background:#04a156; color:white; box-shadow:0 6px 16px rgba(4,161,86,.35) }
           .row{ display:flex; gap:8px; align-items:center }
           .balance{ font-size:28px; font-weight:700; margin:8px 0 0 }
-          .muted{ color:#94a3b8; font-size:12px }
+          .muted{ color:#cfcfcf; font-size:12px }
         </style>
         <div class="card">
           ${this.state.token ? `
@@ -40,7 +41,7 @@
             <div class="muted">Current USD balance</div>
             <div style="margin-top:12px" class="row">
               <button id="refresh">Refresh</button>
-              <button id="logout" style="background:#1f2937">Log out</button>
+              <button id="logout" style="background:#333333">Log out</button>
             </div>
           ` : `
             <form id="login">

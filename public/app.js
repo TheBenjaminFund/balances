@@ -1,4 +1,17 @@
+
 const baseUrl = window.location.origin;
+
+// toast
+function toast(msg, ok=true){
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.position='fixed'; t.style.right='16px'; t.style.bottom='16px';
+  t.style.padding='10px 14px'; t.style.borderRadius='10px';
+  t.style.background = ok ? '#04a156' : '#b3261e';
+  t.style.color = '#fff'; t.style.boxShadow='0 8px 20px rgba(0,0,0,.35)';
+  document.body.appendChild(t);
+  setTimeout(()=> t.remove(), 1800);
+}
 
 // Populate embed snippet
 const snippetEl = document.getElementById('snippet');
@@ -37,19 +50,20 @@ function render() {
       e.preventDefault();
       const email = form.querySelector('#email').value.trim();
       const password = form.querySelector('#password').value;
-      const r = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await r.json();
-      if (r.ok) {
+      try{
+        const r = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Login failed');
         state.token = data.token;
         state.user = data.user;
         render();
         fetchUsers();
-      } else {
-        alert(data.error || 'Login failed');
+      }catch(err){
+        toast(err.message, false);
       }
     };
     app.appendChild(form);
@@ -70,6 +84,43 @@ function render() {
   };
   app.appendChild(hdr);
 
+  // Create User panel
+  const add = document.createElement('div');
+  add.style.marginTop='16px';
+  add.innerHTML = `
+    <div class="row" style="gap:16px; flex-wrap:wrap">
+      <div style="flex:1; min-width:220px">
+        <label>New user email</label>
+        <input id="newEmail" placeholder="user@example.com" />
+      </div>
+      <div style="flex:1; min-width:220px">
+        <label>Temp password</label>
+        <input id="newPass" placeholder="e.g. 4829137" />
+      </div>
+      <div><button id="create">Create user</button></div>
+    </div>`;
+  app.appendChild(add);
+
+  add.querySelector('#create').onclick = async ()=>{
+    const email = add.querySelector('#newEmail').value.trim().toLowerCase();
+    const password = add.querySelector('#newPass').value.trim();
+    if(!email || !password) return toast('Email and password required', false);
+    try{
+      const r = await fetch('/api/admin/users', {
+        method:'POST',
+        headers:{ 'Content-Type': 'application/json', 'Authorization':'Bearer '+state.token },
+        body: JSON.stringify({ email, password })
+      });
+      const d = await r.json();
+      if(!r.ok) throw new Error(d.error || 'Create failed');
+      toast('User created');
+      add.querySelector('#newEmail').value='';
+      add.querySelector('#newPass').value='';
+      fetchUsers();
+    }catch(e){ toast(e.message, false); }
+  };
+
+  // Users table
   const tableWrap = document.createElement('div');
   tableWrap.style.marginTop = '16px';
   tableWrap.innerHTML = `
@@ -89,34 +140,42 @@ function render() {
       <td>$${(u.balance_cents / 100).toFixed(2)}</td>
       <td>
         <div class="row">
-          <input style="max-width:140px" placeholder="New balance (USD)" id="b${u.id}" />
+          <input style="max-width:160px" placeholder="New balance (USD)" id="b${u.id}" />
           <button id="s${u.id}">Save</button>
         </div>
       </td>`;
     tbody.appendChild(tr);
     tr.querySelector('#s' + u.id).onclick = async () => {
-      const usd = parseFloat(tr.querySelector('#b' + u.id).value);
-      if (Number.isNaN(usd)) return alert('Enter a number');
-      const r = await fetch('/api/admin/users/' + u.id + '/balance', {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + state.token
-        },
-        body: JSON.stringify({ balance_cents: Math.round(usd * 100) })
-      });
-      if (r.ok) fetchUsers();
-      else alert('Update failed');
+      const val = tr.querySelector('#b' + u.id).value.trim();
+      const usd = Number(val.replace(/[^0-9.\-]/g,''));
+      if (!Number.isFinite(usd)) return toast('Enter a numeric USD amount', false);
+      try{
+        const r = await fetch('/api/admin/users/' + u.id + '/balance', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + state.token
+          },
+          body: JSON.stringify({ balance_cents: Math.round(usd * 100) })
+        });
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok) throw new Error(d.error || 'Update failed');
+        toast('Balance updated');
+        fetchUsers();
+      }catch(e){ toast(e.message, false); }
     };
   }
 }
 
 async function fetchUsers() {
-  const r = await fetch('/api/admin/users', {
-    headers: { 'Authorization': 'Bearer ' + state.token }
-  });
-  if (r.ok) state.users = await r.json();
-  render();
+  try{
+    const r = await fetch('/api/admin/users', {
+      headers: { 'Authorization': 'Bearer ' + state.token }
+    });
+    if(!r.ok) throw new Error('Failed to fetch users');
+    state.users = await r.json();
+    render();
+  }catch(e){ toast(e.message, false); }
 }
 
 render();

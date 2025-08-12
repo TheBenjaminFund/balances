@@ -1,56 +1,19 @@
 
-# Balance Widget App
+# The Benjamin Fund – Balance App
 
-Secure login + USD balance display with admin controls, plus an embeddable `<balance-widget>`.
+Admin can create users and edit balances. Users log in via an embeddable widget.
 
-## Quick Start (Local)
+## Deploy (Render)
+- Build: `npm install`
+- Start: `npm start`
+- Env:
+  - `ADMIN_EMAIL`
+  - `ADMIN_PASSWORD`
+  - `JWT_SECRET`
 
-```bash
-npm install
-cp .env.sample .env   # then edit values
-npm start
-```
-
-Open http://localhost:3000
-
-## Deploy to Render
-
-1. Create a **new GitHub repository** and upload all files in this folder (not a ZIP).
-
-2. In Render, choose **New -> Web Service**, connect the repo.
-
-3. Build command: `npm install`
-
-4. Start command: `npm start`
-
-5. Add Environment Variables:
-
-   - `ADMIN_EMAIL` (your admin email)
-
-   - `ADMIN_PASSWORD` (temporary; change after first login)
-
-   - `JWT_SECRET` (random string)
-
-6. Deploy. Visit the URL Render gives you.
-
-7. For embedding, use:
-
+## Embedding
+Use the snippet shown on the home page after deploy, or:
 ```html
 <script src="https://YOUR-APP.onrender.com/widget.js"></script>
 <balance-widget data-base-url="https://YOUR-APP.onrender.com"></balance-widget>
 ```
-
-## API (short)
-
-- `POST /api/auth/register` { email, password } -> token
-
-- `POST /api/auth/login` { email, password } -> token, user, balance_cents
-
-- `GET /api/me` (Bearer token) -> user, balance
-
-- `GET /api/admin/users` (admin) -> list
-
-- `PATCH /api/admin/users/:id/balance` (admin) -> update
-
-- `POST /api/admin/reset-password` (admin) -> set a new password for a user
-

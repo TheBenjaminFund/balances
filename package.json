@@ -1,11 +1,10 @@
 {
-  "name": "balance-widget-app",
-  "version": "1.0.0",
+  "name": "benjamin-balance-app",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
