@@ -1,3 +1,9 @@
+const fmtMoney = (cents) => {
+  if (cents === null || cents === undefined) return '—';
+  const val = (Number(cents) / 100);
+  return new Intl.NumberFormat(undefined, { style:'currency', currency:'USD', maximumFractionDigits:2 }).format(val);
+};
+
 
 // Fetch public stats for hero
 (async function loadHero(){
@@ -5,9 +11,7 @@
     const r = await fetch('/api/public-stats');
     if(r.ok){
       const d = await r.json();
-      if (typeof d.share_price === 'number') {
-//         document.getElementById('heroPrice').textContent = d.share_price.toFixed(2);
-      }
+      
       if (d.last_updated) {
         document.getElementById('heroLU').textContent = 'Last Updated: ' + d.last_updated;
       }
@@ -98,7 +102,7 @@ function render(){
         } else {
           const isUp = pl >= 0;
           pctEl.textContent = (isUp?'+':'') + pct.toFixed(2) + '%';
-          dolEl.textContent = (isUp?'+':'') + '$' + (Math.abs(pl)/100).toFixed(2);
+          dolEl.textContent = (isUp?'+':'') + fmtMoney(Math.abs(pl));
           pctEl.className = 'pill ' + (isUp?'green':'red');
           dolEl.className = 'pill ' + (isUp?'green':'red');
         }
@@ -114,8 +118,7 @@ function render(){
   settings.innerHTML = `
     <h2>Settings</h2>
     <div class="row" style="gap:16px; flex-wrap:wrap">
-      <div><label>Share Price (USD)</label><input id="sp" placeholder="100.00" /></div>
-      <div><label>Last Updated (YYYY-MM-DD)</label><input id="lu" placeholder="2025-08-12" /></div>
+      <div>      <div><label>Last Updated (YYYY-MM-DD)</label><input id="lu" placeholder="2025-08-12" /></div>
       <div style="align-self:end"><button id="saveSettings">Save</button></div>
     </div>
     <div class="small" id="curSettings" style="margin-top:6px"></div>`;
@@ -135,7 +138,7 @@ function render(){
     const sp = settings.querySelector('#sp').value.trim();
     const lu = settings.querySelector('#lu').value.trim();
     try{
-      if(sp) await fetch('/api/admin/share-price', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token }, body: JSON.stringify({ share_price: Number(sp) }) });
+      /* share price removed */ if(false) await fetch('/api/admin/share-price', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token }, body: JSON.stringify({ share_price: Number(sp) }) });
       if(lu) await fetch('/api/admin/last-updated', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token }, body: JSON.stringify({ last_updated: lu }) });
       toast('Settings saved');
     }catch(e){ toast('Save failed', false); }
@@ -249,3 +252,61 @@ function loginSubmit(form){
 }
 
 render();
+
+
+function renderPasswordChange(container){
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <h2>Change Password</h2>
+    <div class="row">
+      <div><label>Current password</label><input id="curPwd" type="password" placeholder="Current password"/></div>
+      <div><label>New password</label><input id="newPwd" type="password" placeholder="New password"/></div>
+      <div><label>Confirm new password</label><input id="newPwd2" type="password" placeholder="Confirm new password"/></div>
+    </div>
+    <button id="savePwd" class="btn">Update Password</button>
+  `;
+  container.appendChild(card);
+  card.querySelector('#savePwd').onclick = async () => {
+    const a = card.querySelector('#curPwd').value.trim();
+    const b = card.querySelector('#newPwd').value.trim();
+    const c = card.querySelector('#newPwd2').value.trim();
+    if(!a || !b || !c) return toast('Fill all fields', false);
+    if(b !== c) return toast('New passwords do not match', false);
+    try{
+      const r = await fetch('/api/me/password', {
+        method:'PATCH',
+        headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token },
+        body: JSON.stringify({ current_password:a, new_password:b })
+      });
+      if(!r.ok) throw new Error('bad');
+      toast('Password updated');
+      card.querySelector('#curPwd').value=''; card.querySelector('#newPwd').value=''; card.querySelector('#newPwd2').value='';
+    }catch(e){ toast('Update failed', false); }
+  };
+}
+
+
+function renderUserYearSection(container, user){
+  const d = user;
+  const dep = d.year_2024_deposits_cents ?? null;
+  const end = d.year_2024_ending_balance_cents ?? null;
+  let pl = null, pct = null;
+  if (dep !== null && end !== null){
+    pl = end - dep;
+    pct = dep > 0 ? (pl/dep)*100 : null;
+  }
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <h2>2024 Results</h2>
+    <div class="stats four">
+      <div class="stat"><div class="label">2024 Deposits</div><div class="value" id="ydep">${"${"}fmtMoney(dep)${"}"}</div></div>
+      <div class="stat"><div class="label">2024 Ending Balance</div><div class="value" id="yend">${"${"}fmtMoney(end)${"}"}</div></div>
+      <div class="stat perf-big"><div class="label">2024 Performance ($)</div><div class="value" id="ypl">${"${"}pl===null?'—':fmtMoney(pl)${"}"}</div></div>
+      <div class="stat perf-big"><div class="label">2024 Performance (%)</div><div class="value" id="ypct">${"${"}pct===null?'—':( (pl>=0?'+':'') + pct.toFixed(2) + '%' )${"}"}</div></div>
+    </div>
+    <div class="subtle">Note: These are <strong>2024-only</strong> figures and are separate from your current total deposits, balance, and performance.</div>
+  `;
+  container.appendChild(card);
+}

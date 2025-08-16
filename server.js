@@ -24,10 +24,25 @@ app.use(helmet());
 app.use(express.json());
 app.use(cors({ origin: true, credentials: true }));
 
-const dbFile = path.join(__dirname, 'data.sqlite');
+const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+const dbFile = path.join(dataDir, 'data.sqlite');
 const db = new sqlite3.Database(dbFile);
 
 // --- DB init & migrations ---
+
+// --- Add 2024 columns if missing ---
+db.all("PRAGMA table_info(users)", [], (e, cols) => {
+  const names = (cols||[]).map(c=>c.name);
+  const jobs = [];
+  if (!names.includes('year_2024_deposits_cents')) jobs.push("ALTER TABLE users ADD COLUMN year_2024_deposits_cents INTEGER DEFAULT 0");
+  if (!names.includes('year_2024_ending_balance_cents')) jobs.push("ALTER TABLE users ADD COLUMN year_2024_ending_balance_cents INTEGER DEFAULT 0");
+  (function run(i){
+    if (i>=jobs.length) return;
+    db.run(jobs[i], [], ()=> run(i+1));
+  })(0);
+});
+
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,7 +114,26 @@ app.post('/api/auth/login', (req, res) => {
       token,
       user,
       balance_cents: row.balance_cents,
-      deposit_cents: row.deposit_cents
+      deposit_cents: row.deposit_cents,
+      year_2024_deposits_cents: row.year_2024_deposits_cents ?? 0,
+      year_2024_ending_balance_cents: row.year_2024_ending_balance_cents ?? 0
+    });
+  });
+});
+
+
+// User can update own password
+app.patch('/api/me/password', auth, (req, res) => {
+  const { current_password, new_password } = req.body || {};
+  if (!current_password || !new_password) return res.status(400).json({ error: 'Missing fields' });
+  db.get("SELECT password_hash FROM users WHERE id = ?", [req.user.sub], (err, row) => {
+    if (err || !row) return res.status(500).json({ error: 'DB error' });
+    const ok = bcrypt.compareSync(current_password, row.password_hash);
+    if (!ok) return res.status(401).json({ error: 'Current password incorrect' });
+    const hash = bcrypt.hashSync(new_password, 10);
+    db.run("UPDATE users SET password_hash = ? WHERE id = ?", [hash, req.user.sub], function(e2){
+      if (e2) return res.status(500).json({ error: 'DB error' });
+      res.json({ updated: true });
     });
   });
 });
@@ -170,6 +204,24 @@ app.patch('/api/admin/users/:id/balance', auth, adminOnly, (req, res) => {
   });
 });
 
+
+app.patch('/api/admin/users/:id/year/2024', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { deposits_cents, ending_balance_cents } = req.body || {};
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Bad id' });
+  const dep = Number.isFinite(deposits_cents) ? Math.round(deposits_cents) : null;
+  const end = Number.isFinite(ending_balance_cents) ? Math.round(ending_balance_cents) : null;
+  if (dep===null && end===null) return res.status(400).json({ error: 'Nothing to update' });
+  const fields = []; const params = [];
+  if (dep!==null){ fields.push("year_2024_deposits_cents = ?"); params.push(dep); }
+  if (end!==null){ fields.push("year_2024_ending_balance_cents = ?"); params.push(end); }
+  params.push(id);
+  db.run("UPDATE users SET "+fields.join(", ")+" WHERE id = ?", params, function(err){
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ updated: this.changes > 0 });
+  });
+});
+
 app.patch('/api/admin/users/:id/deposit', auth, adminOnly, (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { deposit_cents } = req.body || {};
@@ -180,7 +232,7 @@ app.patch('/api/admin/users/:id/deposit', auth, adminOnly, (req, res) => {
   });
 });
 
-// --- Admin: settings (last_updated, share_price) ---
+// --- Admin: settings (last_updated, /*removed_share_price*/) ---
 app.get('/api/admin/last-updated', auth, adminOnly, (req, res) => {
   db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, row) => res.json({ last_updated: row?.value || null }));
 });
@@ -192,24 +244,18 @@ app.post('/api/admin/last-updated', auth, adminOnly, (req, res) => {
     res.json({ saved: true, last_updated });
   });
 });
-app.get('/api/admin/share-price', auth, adminOnly, (req, res) => {
-  db.get("SELECT value FROM settings WHERE key = 'share_price'", [], (e, row) => res.json({ share_price: row?.value || null }));
-});
-app.post('/api/admin/share-price', auth, adminOnly, (req, res) => {
-  const { share_price } = req.body || {};
-  if (share_price === undefined) return res.status(400).json({ error: 'share_price required' });
-  db.run("INSERT INTO settings(key,value) VALUES('share_price',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [String(share_price)], (e) => {
+  db.run("INSERT INTO settings(key,value) VALUES('/*removed_share_price*/',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [String(/*removed_share_price*/)], (e) => {
     if (e) return res.status(500).json({ error: 'DB error' });
-    res.json({ saved: true, share_price: Number(share_price) });
+    res.json({ saved: true, /*removed_share_price*/: Number(/*removed_share_price*/) });
   });
 });
 
 // --- Public stats for hero ---
 app.get('/api/public-stats', (req, res) => {
-  db.get("SELECT value FROM settings WHERE key = 'share_price'", [], (e1, sp) => {
-    db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e2, lu) => {
-      const share = sp?.value ? Number(sp.value) : null;
-      res.json({ share_price: share, last_updated: lu?.value || null });
+  db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e2, lu) => {
+    res.json({ last_updated: lu?.value || null });
+  });
+});
     });
   });
 });

@@ -47,3 +47,8 @@ input::placeholder{color:#9a9a9a}
 .pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}
 .pill.green{background:#0d3d28;color:#8ef0be}
 .pill.red{background:#3d1210;color:#ffc0bd}
+
+
+/* Bigger performance tiles */
+.stat.perf-big .value{ font-size:34px; font-weight:900; }
+.stats.four{ grid-template-columns:repeat(4,1fr); }
