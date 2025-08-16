@@ -24,9 +24,19 @@ app.use(helmet());
 app.use(express.json());
 app.use(cors({ origin: true, credentials: true }));
 
-const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
-if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+let dataDir = process.env.DATA_DIR;
+try {
+  if (!dataDir) {
+    dataDir = path.join(__dirname, 'data');
+  }
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+} catch (e) {
+  console.warn('DATA_DIR not usable, falling back to local ./data:', e.message);
+  dataDir = path.join(__dirname, 'data');
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+}
 const dbFile = path.join(dataDir, 'data.sqlite');
+console.log('SQLite DB path:', dbFile);
 const db = new sqlite3.Database(dbFile);
 
 // --- DB init & migrations ---

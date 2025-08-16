@@ -135,7 +135,7 @@ function render(){
   });
 
   settings.querySelector('#saveSettings').onclick = async ()=>{
-    const sp = settings.querySelector('#sp').value.trim();
+    const sp = (settings.querySelector('#sp')?.value || '').trim();
     const lu = settings.querySelector('#lu').value.trim();
     try{
       /* share price removed */ if(false) await fetch('/api/admin/share-price', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token }, body: JSON.stringify({ share_price: Number(sp) }) });
