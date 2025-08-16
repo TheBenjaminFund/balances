@@ -6,7 +6,7 @@
     if(r.ok){
       const d = await r.json();
       if (typeof d.share_price === 'number') {
-        document.getElementById('heroPrice').textContent = d.share_price.toFixed(2);
+//         document.getElementById('heroPrice').textContent = d.share_price.toFixed(2);
       }
       if (d.last_updated) {
         document.getElementById('heroLU').textContent = 'Last Updated: ' + d.last_updated;
@@ -126,7 +126,7 @@ function render(){
     fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token } }).then(r=>r.json())
   ]).then(([sp, lu]) => {
     const cur = [];
-    if (sp.share_price !== null && sp.share_price !== undefined) cur.push('Share Price: $'+Number(sp.share_price).toFixed(2));
+//     if (sp.share_price !== null && sp.share_price !== undefined) cur.push('Share Price: $'+Number(sp.share_price).toFixed(2));
     if (lu.last_updated) cur.push('Last Updated: '+lu.last_updated);
     settings.querySelector('#curSettings').textContent = cur.length ? ('Current – '+cur.join(' | ')) : 'Current: (not set)';
   });
