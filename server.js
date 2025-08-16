@@ -1,4 +1,3 @@
-console.log('[The Benjamin Fund] Build v7 loaded');
 
 import express from 'express';
 import cors from 'cors';
@@ -25,7 +24,7 @@ app.use(helmet());
 app.use(express.json());
 app.use(cors({ origin: true, credentials: true }));
 
-const dbFile = process.env.DB_PATH || path.join('/data', 'database.sqlite');
+const dbFile = path.join(__dirname, 'data.sqlite');
 const db = new sqlite3.Database(dbFile);
 
 // --- DB init & migrations ---
@@ -45,29 +44,6 @@ db.serialize(() => {
     value TEXT
   )`);
 
-  // Add must_change_password & deposit_cents if missing
-  db.all("PRAGMA table_info(users)", [], (err, rows) => {
-    if (!err) {
-      const cols = rows.map(r => r.name);
-      if (!cols.includes('deposit_cents')) {
-        db.run("ALTER TABLE users ADD COLUMN deposit_cents INTEGER NOT NULL DEFAULT 0");
-      }
-      if (!cols.includes('must_change_password')) {
-        db.run("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0");
-      }
-    }
-  });
-
-  // Yearly stats table for per-user summaries
-  db.run(`CREATE TABLE IF NOT EXISTS yearly_stats (
-    user_id INTEGER NOT NULL,
-    year INTEGER NOT NULL,
-    deposit_cents INTEGER NOT NULL DEFAULT 0,
-    ending_cents INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (user_id, year),
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
-  )`);
-
   // Add deposit_cents column if it doesn't exist
   db.all("PRAGMA table_info(users)", [], (err, rows) => {
     if (!err) {
@@ -83,8 +59,8 @@ db.serialize(() => {
     if (err) { console.error(err); return; }
     if (!row) {
       const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-      db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents, must_change_password) VALUES (?,?,?,?,?,?)",
-        [ADMIN_EMAIL, hash, 'admin', 0, 0, 0],
+      db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents) VALUES (?,?,?,?,?)",
+        [ADMIN_EMAIL, hash, 'admin', 0, 0],
         (e) => { if (e) console.error("Admin seed error", e); else console.log("Seeded admin:", ADMIN_EMAIL); }
       );
     } else {
@@ -117,7 +93,7 @@ app.post('/api/auth/login', (req, res) => {
     if (err || !row) return res.status(401).json({ error: 'Invalid credentials' });
     const ok = bcrypt.compareSync(password, row.password_hash);
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
-    const user = { id: row.id, email: row.email, role: row.role, must_change_password: !!row.must_change_password };
+    const user = { id: row.id, email: row.email, role: row.role };
     const token = signToken(user);
     res.json({
       token,
@@ -129,21 +105,16 @@ app.post('/api/auth/login', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => {
-  db.get("SELECT id, email, role, balance_cents, deposit_cents, must_change_password FROM users WHERE id = ?", [req.user.sub], (err, row) => {
+  db.get("SELECT id, email, role, balance_cents, deposit_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
     if (err || !row) return res.status(404).json({ error: 'Not found' });
     // Read last_updated for user display
     db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, lu) => {
-      const lastYear = new Date().getFullYear() - 1;
-      db.get("SELECT deposit_cents, ending_cents FROM yearly_stats WHERE user_id = ? AND year = ?", [row.id, lastYear], (e3, ys) => {
-      const summary = ys ? { year: lastYear, deposit_cents: ys.deposit_cents, ending_cents: ys.ending_cents } : null;
       res.json({
-        user: { id: row.id, email: row.email, role: row.role, must_change_password: !!row.must_change_password },
+        user: { id: row.id, email: row.email, role: row.role },
         balance_cents: row.balance_cents,
         deposit_cents: row.deposit_cents,
-        last_updated: lu?.value || null,
-        last_year_summary: summary
+        last_updated: lu?.value || null
       });
-    });
     });
   });
 });
@@ -160,8 +131,8 @@ app.post('/api/admin/users', auth, adminOnly, (req, res) => {
   const { email, password, role = 'user' } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   const hash = bcrypt.hashSync(password, 10);
-  db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents, must_change_password) VALUES (?,?,?,?,?,?)",
-    [email.toLowerCase(), hash, role, 0, 0, 1],
+  db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents) VALUES (?,?,?,?,?)",
+    [email.toLowerCase(), hash, role, 0, 0],
     function(err) {
       if (err) return res.status(400).json({ error: 'User exists or invalid' });
       res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0, deposit_cents: 0, password });
@@ -173,7 +144,7 @@ app.post('/api/admin/users/:id/reset-password', auth, adminOnly, (req, res) => {
   if (Number.isNaN(id)) return res.status(400).json({ error: 'Bad id' });
   const newPass = Math.floor(100000 + Math.random()*900000).toString().padStart(6,'0');
   const hash = bcrypt.hashSync(newPass, 10);
-  db.run("UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?", [hash, id], function(err) {
+  db.run("UPDATE users SET password_hash = ? WHERE id = ?", [hash, id], function(err) {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json({ updated: this.changes > 0, password: newPass });
   });
@@ -233,30 +204,6 @@ app.post('/api/admin/share-price', auth, adminOnly, (req, res) => {
   });
 });
 
-
-// --- Admin: yearly stats (per-user) ---
-app.get('/api/admin/users/:id/yearly', auth, adminOnly, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const year = parseInt(req.query.year || (new Date().getFullYear() - 1), 10);
-  if (Number.isNaN(id) || Number.isNaN(year)) return res.status(400).json({ error: 'Bad input' });
-  db.get("SELECT user_id, year, deposit_cents, ending_cents FROM yearly_stats WHERE user_id = ? AND year = ?", [id, year], (err, row) => {
-    if (err) return res.status(500).json({ error: 'DB error' });
-    res.json(row || { user_id: id, year, deposit_cents: 0, ending_cents: 0 });
-  });
-});
-app.post('/api/admin/users/:id/yearly', auth, adminOnly, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const { year, deposit_cents, ending_cents } = req.body || {};
-  if (Number.isNaN(id) || !Number.isFinite(year) || !Number.isFinite(deposit_cents) || !Number.isFinite(ending_cents)) {
-    return res.status(400).json({ error: 'Bad input' });
-  }
-  db.run("INSERT INTO yearly_stats(user_id, year, deposit_cents, ending_cents) VALUES (?,?,?,?) ON CONFLICT(user_id, year) DO UPDATE SET deposit_cents=excluded.deposit_cents, ending_cents=excluded.ending_cents",
-    [id, Math.round(year), Math.round(deposit_cents), Math.round(ending_cents)], function(err){
-      if (err) return res.status(500).json({ error: 'DB error' });
-      res.json({ saved: true });
-    });
-});
-
 // --- Public stats for hero ---
 app.get('/api/public-stats', (req, res) => {
   db.get("SELECT value FROM settings WHERE key = 'share_price'", [], (e1, sp) => {
@@ -264,46 +211,6 @@ app.get('/api/public-stats', (req, res) => {
       const share = sp?.value ? Number(sp.value) : null;
       res.json({ share_price: share, last_updated: lu?.value || null });
     });
-  });
-});
-
-
-// --- User: change password ---
-app.post('/api/users/change-password', auth, (req, res) => {
-  const { old_password, new_password } = req.body || {};
-  if (!old_password || !new_password) return res.status(400).json({ error: 'Both old_password and new_password are required' });
-  db.get("SELECT id, password_hash FROM users WHERE id = ?", [req.user.sub], (err, row) => {
-    if (err || !row) return res.status(404).json({ error: 'User not found' });
-    const ok = bcrypt.compareSync(old_password, row.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Incorrect current password' });
-    const hash = bcrypt.hashSync(new_password, 10);
-    db.run("UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?", [hash, req.user.sub], function(e){
-      if (e) return res.status(500).json({ error: 'DB error' });
-      res.json({ changed: true });
-    });
-  });
-});
-
-
-// --- Admin: pre-login message ---
-app.get('/api/admin/prelogin-message', auth, adminOnly, (req, res) => {
-  db.get("SELECT value FROM settings WHERE key = 'prelogin_message'", [], (e, row) => {
-    res.json({ message: row?.value || '' });
-  });
-});
-app.post('/api/admin/prelogin-message', auth, adminOnly, (req, res) => {
-  const { message } = req.body || {};
-  const val = (message || '').toString();
-  db.run("INSERT INTO settings(key,value) VALUES('prelogin_message',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [val], (e) => {
-    if (e) return res.status(500).json({ error: 'DB error' });
-    res.json({ saved: true, message: val });
-  });
-});
-
-// --- Public: pre-login message ---
-app.get('/api/public-message', (req, res) => {
-  db.get("SELECT value FROM settings WHERE key = 'prelogin_message'", [], (e, row) => {
-    res.json({ message: row?.value || '' });
   });
 });
 

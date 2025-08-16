@@ -1,85 +1,4 @@
 
-// --- Admin: Yearly (2024) & Balances UI Enhancements ---
-(function(){
-  const mount = document.getElementById('app');
-  if (!mount) return;
-
-  const thisYear = new Date().getFullYear();
-  const lastYear = thisYear - 1;
-
-  const wait = setInterval(()=>{
-    if (window.initAdminUI){
-      clearInterval(wait);
-      const origInit = window.initAdminUI;
-      window.initAdminUI = function(state){
-        origInit && origInit(state);
-
-        const panel = document.createElement('div');
-        panel.className = 'card';
-        panel.style.marginTop = '16px';
-        panel.innerHTML = `
-          <h2 style="margin:0 0 8px">Investor Balances & Deposits</h2>
-          <div class="small" style="margin-bottom:12px">Edit current balances and deposits, and record prior-year (${lastYear}) totals.</div>
-          <div id="adm-users-wrap" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px"></div>
-          <div class="small" style="margin-top:12px">These ${lastYear} values power the investor-facing “${lastYear} Summary”.</div>
-        `;
-        mount.appendChild(panel);
-
-        fetch('/api/admin/users', { headers:{ 'Authorization':'Bearer '+state.token } })
-          .then(r=>r.json()).then(users=>{
-            const wrap = panel.querySelector('#adm-users-wrap');
-            users.forEach(u=>{
-              const card = document.createElement('div');
-              card.className = 'mini-card';
-              card.style.border = '1px solid #e5e7eb';
-              card.style.borderRadius = '12px';
-              card.style.padding = '12px';
-              card.innerHTML = \`
-                <div style="font-weight:600; margin-bottom:8px">\${u.email}</div>
-                <div style="display:flex; gap:8px; flex-wrap:wrap">
-                  <div><label>Current Balance (¢)</label><input type="number" step="1" min="0" id="bal-\${u.id}" value="\${u.balance_cents}" /></div>
-                  <div><label>Total Deposits (¢)</label><input type="number" step="1" min="0" id="dep-\${u.id}" value="\${u.deposit_cents}" /></div>
-                  <button id="save-\${u.id}">Save</button>
-                </div>
-                <hr style="margin:12px 0">
-                <div style="display:flex; gap:8px; flex-wrap:wrap">
-                  <div><label>\${lastYear} Deposits (¢)</label><input type="number" step="1" min="0" id="ydep-\${u.id}" value="0" /></div>
-                  <div><label>\${lastYear} Ending Balance (¢)</label><input type="number" step="1" min="0" id="yend-\${u.id}" value="0" /></div>
-                  <button id="ysave-\${u.id}">Save \${lastYear}</button>
-                </div>
-              \`;
-              wrap.appendChild(card);
-
-              fetch('/api/admin/users/'+u.id+'/yearly?year='+lastYear, { headers:{ 'Authorization':'Bearer '+state.token } })
-                .then(r=>r.json()).then(y=>{
-                  card.querySelector('#ydep-'+u.id).value = y.deposit_cents||0;
-                  card.querySelector('#yend-'+u.id).value = y.ending_cents||0;
-                }).catch(()=>{});
-
-              card.querySelector('#save-'+u.id).onclick = async ()=>{
-                const bal = Number(card.querySelector('#bal-'+u.id).value||0);
-                const dep = Number(card.querySelector('#dep-'+u.id).value||0);
-                await fetch('/api/admin/users/'+u.id+'/balance', { method:'PATCH', headers:{'Content-Type':'application/json','Authorization':'Bearer '+state.token}, body: JSON.stringify({ balance_cents: bal }) });
-                await fetch('/api/admin/users/'+u.id+'/deposit', { method:'PATCH', headers:{'Content-Type':'application/json','Authorization':'Bearer '+state.token}, body: JSON.stringify({ deposit_cents: dep }) });
-                toast('Saved balances for '+u.email);
-              };
-
-              card.querySelector('#ysave-'+u.id).onclick = async ()=>{
-                const ydep = Number(card.querySelector('#ydep-'+u.id).value||0);
-                const yend = Number(card.querySelector('#yend-'+u.id).value||0);
-                await fetch('/api/admin/users/'+u.id+'/yearly', { method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+state.token}, body: JSON.stringify({ year: lastYear, deposit_cents: ydep, ending_cents: yend }) });
-                toast('Saved '+lastYear+' summary for '+u.email);
-              };
-            });
-          });
-      };
-    }
-  }, 200);
-})();
-
-function formatMoneyDollars(d){ return '$'+Number(d).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function formatMoneyCents(c){ return '$'+(c/100).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
-
 // Fetch public stats for hero
 (async function loadHero(){
   try{
@@ -179,7 +98,7 @@ function render(){
         } else {
           const isUp = pl >= 0;
           pctEl.textContent = (isUp?'+':'') + pct.toFixed(2) + '%';
-          dolEl.textContent = (isUp?'+':'') + formatMoneyCents(Math.abs(pl));
+          dolEl.textContent = (isUp?'+':'') + '$' + (Math.abs(pl)/100).toFixed(2);
           pctEl.className = 'pill ' + (isUp?'green':'red');
           dolEl.className = 'pill ' + (isUp?'green':'red');
         }
@@ -195,7 +114,6 @@ function render(){
   settings.innerHTML = `
     <h2>Settings</h2>
     <div class="row" style="gap:16px; flex-wrap:wrap">
-      <div style="flex:1; min-width:320px"><label>Pre‑Login Message (empty to hide)</label><textarea id="preMsg" placeholder="Optional message shown above the login form" rows="3" style="width:100%"></textarea></div>
       <div><label>Share Price (USD)</label><input id="sp" placeholder="100.00" /></div>
       <div><label>Last Updated (YYYY-MM-DD)</label><input id="lu" placeholder="2025-08-12" /></div>
       <div style="align-self:end"><button id="saveSettings">Save</button></div>
@@ -205,24 +123,20 @@ function render(){
 
   Promise.all([
     fetch('/api/admin/share-price', { headers:{ 'Authorization':'Bearer '+state.token } }).then(r=>r.json()),
-    fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token } }).then(r=>r.json()),
-    fetch('/api/admin/prelogin-message', { headers:{ 'Authorization':'Bearer '+state.token } }).then(r=>r.json())
-  ]).then(([sp, lu, pm]) => {
+    fetch('/api/admin/last-updated', { headers:{ 'Authorization':'Bearer '+state.token } }).then(r=>r.json())
+  ]).then(([sp, lu]) => {
     const cur = [];
-    if (sp.share_price !== null && sp.share_price !== undefined) cur.push('Share Price: '+formatMoneyDollars(sp.share_price));
+    if (sp.share_price !== null && sp.share_price !== undefined) cur.push('Share Price: $'+Number(sp.share_price).toFixed(2));
     if (lu.last_updated) cur.push('Last Updated: '+lu.last_updated);
-    if (pm && typeof pm.message === 'string') settings.querySelector('#preMsg').value = pm.message;
     settings.querySelector('#curSettings').textContent = cur.length ? ('Current – '+cur.join(' | ')) : 'Current: (not set)';
   });
 
   settings.querySelector('#saveSettings').onclick = async ()=>{
-    const preMsg = settings.querySelector('#preMsg').value;
     const sp = settings.querySelector('#sp').value.trim();
     const lu = settings.querySelector('#lu').value.trim();
     try{
       if(sp) await fetch('/api/admin/share-price', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token }, body: JSON.stringify({ share_price: Number(sp) }) });
       if(lu) await fetch('/api/admin/last-updated', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token }, body: JSON.stringify({ last_updated: lu }) });
-      await fetch('/api/admin/prelogin-message', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+state.token }, body: JSON.stringify({ message: preMsg }) });
       toast('Settings saved');
     }catch(e){ toast('Save failed', false); }
   };
@@ -233,7 +147,6 @@ function render(){
   add.innerHTML = `
     <h2>Users</h2>
     <div class="row" style="gap:16px; flex-wrap:wrap">
-      <div style="flex:1; min-width:320px"><label>Pre‑Login Message (empty to hide)</label><textarea id="preMsg" placeholder="Optional message shown above the login form" rows="3" style="width:100%"></textarea></div>
       <div style="flex:1; min-width:220px"><label>New user email</label><input id="newEmail" placeholder="user@example.com" /></div>
       <div style="flex:1; min-width:220px"><label>Temp password (6 digits ok)</label><input id="newPass" placeholder="e.g. 482913" /></div>
       <div style="align-self:end"><button id="create">Create user</button></div>
