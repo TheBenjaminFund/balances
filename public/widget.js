@@ -25,7 +25,7 @@
       const pct = dep > 0 ? (pl/dep)*100 : null;
       const usd = v => '$'+(v/100).toFixed(2);
       const perfPct = pct===null ? '—' : ((pl>=0?'+':'')+pct.toFixed(2)+'%');
-      const perfDol = pct===null ? '—' : ((pl>=0?'+':'')+'$'+(Math.abs(pl)/100).toFixed(2));
+      const perfDol = pct===null ? '—' : ((pl>=0?'+':'')+formatMoneyCents(Math.abs(pl)));
       const pillClass = pct===null ? 'pill' : ('pill ' + (pl>=0?'green':'red'));
 
       this.shadowRoot.innerHTML = `
@@ -77,4 +77,45 @@
     }
   }
   customElements.define('balance-widget', BalanceWidget);
+})();
+
+
+// Show pre-login message banner (if provided by server)
+(function(){
+  const proto = BalanceWidget.prototype;
+  const _render = proto.render;
+  proto.render = function(){
+    _render.call(this);
+    if (!this.shadowRoot) return;
+    const root = this.shadowRoot;
+
+    if (!this.state || !this.state.user){
+      let banner = root.getElementById('prelogin-banner');
+      if (!banner){
+        banner = document.createElement('div');
+        banner.id = 'prelogin-banner';
+        banner.style.margin = '0 0 12px';
+        banner.style.padding = '12px';
+        banner.style.borderRadius = '12px';
+        banner.style.border = '1px solid #93c5fd';
+        banner.style.background = '#1e3a8a22';
+        banner.style.color = '#bfdbfe';
+        const card = root.querySelector('.card') || root;
+        card.insertBefore(banner, card.firstChild);
+      }
+      fetch(this.state.baseUrl + '/api/public-message')
+        .then(r=>r.json()).then(d=>{
+          const msg = (d && typeof d.message === 'string') ? d.message.trim() : '';
+          if (msg){
+            banner.style.display = 'block';
+            banner.textContent = msg;
+          } else {
+            banner.style.display = 'none';
+          }
+        }).catch(()=>{ banner.style.display = 'none'; });
+    } else {
+      const banner = root.getElementById('prelogin-banner');
+      if (banner) banner.remove();
+    }
+  };
 })();
