@@ -1,3 +1,4 @@
+console.log('[The Benjamin Fund] Build v7 loaded');
 
 (function(){
   class BalanceWidget extends HTMLElement{
