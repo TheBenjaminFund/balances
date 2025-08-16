@@ -254,9 +254,8 @@ app.post('/api/admin/last-updated', auth, adminOnly, (req, res) => {
     res.json({ saved: true, last_updated });
   });
 });
-  db.run("INSERT INTO settings(key,value) VALUES('/*removed_share_price*/',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [String(/*removed_share_price*/)], (e) => {
     if (e) return res.status(500).json({ error: 'DB error' });
-    res.json({ saved: true, /*removed_share_price*/: Number(/*removed_share_price*/) });
+    res.json({ saved: true });
   });
 });
 
@@ -264,6 +263,8 @@ app.post('/api/admin/last-updated', auth, adminOnly, (req, res) => {
 app.get('/api/public-stats', (req, res) => {
   db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e2, lu) => {
     res.json({ last_updated: lu?.value || null });
+  });
+});
   });
 });
     });
