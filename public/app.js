@@ -27,6 +27,10 @@ function renderLogin(){
     </div>
   `;
   app.appendChild(card);
+      const pctEl = card.querySelector('#pct');
+      if (pctEl){
+        pctEl.innerHTML = `<span class="${tone}">${pct===null?'—':pct.toFixed(2)+'%'} (${fmtMoney(pl)})</span>`;
+      }
   card.querySelector('#login').onclick = async ()=>{
     const email = card.querySelector('#email').value.trim();
     const password = card.querySelector('#password').value.trim();
@@ -251,16 +255,12 @@ function renderAdmin(container){
 function renderHome(){
   app.innerHTML = '';
 
-  const header = document.createElement('div'); header.className='card';
-  header.innerHTML = `<div class="row" style="justify-content:space-between">
-    <div class="logo-wrap"><img class="logo" src="/logo.png" alt="The Benjamin Fund logo"></div>
-    <div class="row">
-      <div class="subtle">${state.user.email} (${state.user.role})</div>
-      <button id="logout">Logout</button>
-    </div>
-  </div>`;
-  app.appendChild(header);
-  header.querySelector('#logout').onclick = ()=>{ state.token=null; state.user=null; renderLogin(); };
+  // Use the persistent site header for account info + logout
+  const acct = document.getElementById('siteHeaderAcct');
+  if (acct){
+    acct.innerHTML = `<div class="row"><div class="subtle">${state.user.email} (${state.user.role})</div><button id="logout">Logout</button></div>`;
+    acct.querySelector('#logout').onclick = ()=>{ state.token=null; state.user=null; acct.innerHTML=''; renderLogin(); };
+  }
 
   // Load 'me' fresh
   fetch('/api/me', { headers:{ 'Authorization':'Bearer '+state.token } })
@@ -281,6 +281,10 @@ function renderHome(){
         </div>
         <div class=\"subtle\" id=\"currentYearNote\"></div>`;
       app.appendChild(card);
+      const pctEl = card.querySelector('#pct');
+      if (pctEl){
+        pctEl.innerHTML = `<span class="${tone}">${pct===null?'—':pct.toFixed(2)+'%'} (${fmtMoney(pl)})</span>`;
+      }
       const yr=new Date().getFullYear(); document.getElementById('currentYearNote').textContent = `Current totals — ${yr} YTD`;
 
       renderUserYearSection(app, d);

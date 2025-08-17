@@ -60,3 +60,8 @@ input::placeholder{ color:#cbd5e1; opacity:.8; }
 .site-header .logo-line img{ height:36px; width:auto; display:block; }
 .site-header .help{ margin-top:6px; font-size:13px; color:var(--muted); }
 .site-header .help a{ color:var(--accent); text-decoration:none; }
+
+/* Header layout with right account area */
+.header-flex{ display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.header-flex .left{ display:flex; flex-direction:column; }
+.header-flex .acct .row{ gap:12px; }
