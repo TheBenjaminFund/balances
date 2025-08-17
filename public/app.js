@@ -105,6 +105,36 @@ function renderAdmin(container){
   container.appendChild(wrap);
   const root = wrap.querySelector('#adminRoot');
 
+  // Create User
+  const create = document.createElement('div'); create.className='card';
+  create.innerHTML = `
+    <h3>Create User</h3>
+    <div class="row" style="flex-wrap:wrap; gap:8px">
+      <input id="newEmail" type="email" placeholder="Email">
+      <input id="newPass" type="text" placeholder="(Optional) Set password">
+      <button id="createUser">Add User</button>
+    </div>
+    <div class="subtle">If no password is provided, a temporary password will be generated.</div>
+  `;
+  root.appendChild(create);
+  create.querySelector('#createUser').onclick = async ()=>{
+    const email = create.querySelector('#newEmail').value.trim();
+    const password = create.querySelector('#newPass').value.trim();
+    if(!email) return toast('Email required', false);
+    try{
+      const r = await fetch('/api/admin/users', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+state.token },
+        body: JSON.stringify({ email, password: password || undefined })
+      });
+      if(!r.ok) throw new Error('bad');
+      const j = await r.json();
+      toast('User created'+(j.temp_password?(' — temp password: '+j.temp_password):''));
+      create.querySelector('#newEmail').value=''; create.querySelector('#newPass').value='';
+      fetchUsers();
+    }catch(e){ toast('Create failed', false); }
+  };
+
   // Settings
   const settings = document.createElement('div'); settings.className='card';
   settings.innerHTML = `
@@ -243,8 +273,10 @@ function renderHome(){
           <div class="stat"><div class="label">Balance</div><div class="value" id="bal">${fmtMoney(bal)}</div></div>
           <div class="stat"><div class="label">Deposits</div><div class="value" id="dep">${fmtMoney(dep)}</div></div>
           <div class="stat perf-big"><div class="label">Performance</div><div class="value">${pl>=0?'+':''}${pct===null?'—':pct.toFixed(2)+'%'} (${fmtMoney(pl)})</div></div>
-        </div>`;
+        </div>
+        <div class=\"subtle\" id=\"currentYearNote\"></div>`;
       app.appendChild(card);
+      const yr=new Date().getFullYear(); document.getElementById('currentYearNote').textContent = `Current totals — ${yr} YTD`;
 
       renderUserYearSection(app, d);
       renderPasswordChange(app);

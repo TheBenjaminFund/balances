@@ -22,3 +22,9 @@ button:disabled{ opacity:.6; cursor:not-allowed; }
 .subtle{ color:var(--muted); font-size:13px; margin-top:6px; }
 .toast{ position:fixed; right:16px; bottom:16px; background:#0e1629; border:1px solid #1f2a44; padding:10px 12px; border-radius:10px; }
 .hidden{ display:none; }
+
+
+/* Brand logo */
+.logo{ height:32px; width:auto; display:block; }
+.logo-wrap{ display:flex; align-items:center; gap:10px; }
+.brand-title{ font-size:18px; font-weight:800; letter-spacing:.02em; }
