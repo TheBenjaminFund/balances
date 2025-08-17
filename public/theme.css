@@ -1,6 +1,9 @@
-/* Override these variables with your brand palette.
-   Drop your logo at /public/logo.png to show it in the header. */
+/* Brand theme — THE BENJAMIN FUND */
 :root{
-  /* Examples — replace with your colors */
-  /* --bg:#0b1220; --card:#111a2e; --text:#e9eef7; --muted:#90a0bf; --accent:#6ad1ff; */
+  --bg:#1e1e1e;
+  --card:#232323;
+  --text:#ffffff;
+  --muted:#b3b3b3;
+  --accent:#04a156;
+  --danger:#e14a4a;
 }

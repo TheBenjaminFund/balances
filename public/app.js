@@ -59,8 +59,8 @@ function renderUserYearSection(container, d){
     <div class="stats four">
       <div class="stat"><div class="label">2024 Deposits</div><div class="value">${fmtMoney(dep)}</div></div>
       <div class="stat"><div class="label">2024 Ending Balance</div><div class="value">${fmtMoney(end)}</div></div>
-      <div class="stat perf-big"><div class="label">2024 Performance ($)</div><div class="value">${pl===null?'—':fmtMoney(pl)}</div></div>
-      <div class="stat perf-big"><div class="label">2024 Performance (%)</div><div class="value">${pct===null?'—':((pl>=0?'+':'')+pct.toFixed(2)+'%')}</div></div>
+      <div class="stat perf-big"><div class="label">2024 Performance ($)</div><div class="value ${pl>=0?'positive':'negative'}">${pl===null?'—':fmtMoney(pl)}</div></div>
+      <div class="stat perf-big"><div class="label">2024 Performance (%)</div><div class="value ${pl>=0?'positive':'negative'}">${pct===null?'—':((pl>=0?'+':'')+pct.toFixed(2)+'%')}</div></div>
     </div>
     <div class="subtle">These are <strong>2024-only</strong> figures and separate from your overall totals.</div>
   `;
@@ -127,8 +127,8 @@ function renderAdmin(container){
         headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+state.token },
         body: JSON.stringify({ email, password: password || undefined })
       });
-      if(!r.ok) throw new Error('bad');
-      const j = await r.json();
+      let j; try{ j = await r.json(); }catch(e){}
+      if(!r.ok){ return toast(j?.error || 'Create failed', false); }
       toast('User created'+(j.temp_password?(' — temp password: '+j.temp_password):''));
       create.querySelector('#newEmail').value=''; create.querySelector('#newPass').value='';
       fetchUsers();
@@ -249,13 +249,25 @@ function renderHome(){
   app.innerHTML = '';
 
   const header = document.createElement('div'); header.className='card';
-  header.innerHTML = `<div class="row" style="justify-content:space-between">
-    <h1>Benjamin Fund</h1>
-    <div class="row">
-      <div class="subtle">${state.user.email} (${state.user.role})</div>
-      <button id="logout">Logout</button>
-    </div>
-  </div>`;
+  const headerInner = document.createElement('div'); headerInner.className = 'row'; headerInner.style.justifyContent='space-between';
+
+  // Left: Brand
+  const left = document.createElement('div'); left.className='logo-wrap';
+  // Try to render logo; if it fails, fallback to text title
+  const img = new Image(); img.src='/logo.png'; img.alt='Logo'; img.className='logo';
+  img.onerror = ()=>{ left.innerHTML = '<div class="brand-title">The Benjamin Fund</div>'; };
+  img.onload = ()=>{ left.innerHTML = ''; left.appendChild(img); };
+  // Show temporary text before load to avoid empty space
+  left.innerHTML = '<div class="brand-title">The Benjamin Fund</div>';
+
+  // Right: User + Logout
+  const right = document.createElement('div'); right.className='row';
+  right.innerHTML = `<div class="subtle">${state.user.email} (${state.user.role})</div>`;
+  const lo = document.createElement('button'); lo.id='logout'; lo.textContent='Logout';
+  right.appendChild(lo);
+
+  headerInner.appendChild(left); headerInner.appendChild(right);
+  header.appendChild(headerInner);
   app.appendChild(header);
   header.querySelector('#logout').onclick = ()=>{ state.token=null; state.user=null; renderLogin(); };
 
@@ -272,11 +284,26 @@ function renderHome(){
         <div class="stats">
           <div class="stat"><div class="label">Balance</div><div class="value" id="bal">${fmtMoney(bal)}</div></div>
           <div class="stat"><div class="label">Deposits</div><div class="value" id="dep">${fmtMoney(dep)}</div></div>
-          <div class="stat perf-big"><div class="label">Performance</div><div class="value">${pl>=0?'+':''}${pct===null?'—':pct.toFixed(2)+'%'} (${fmtMoney(pl)})</div></div>
+          <div class="stat perf-big"><div class="label">Performance</div><div class="value ${pl>=0?'positive':'negative'}">${pl>=0?'+':''}${pct===null?'—':pct.toFixed(2)+'%'} (${fmtMoney(pl)})</div></div>
         </div>
         <div class=\"subtle\" id=\"currentYearNote\"></div>`;
       app.appendChild(card);
       const yr=new Date().getFullYear(); document.getElementById('currentYearNote').textContent = `Current totals — ${yr} YTD`;
+      // Color-code performance
+      (function(){
+        var perfEl = document.getElementById('perfVal');
+        if (perfEl){
+          var plNum = (pl/100); // pl in dollars, sign determines color
+          if (plNum >= 0){
+            perfEl.classList.remove('danger');
+            perfEl.classList.add('accent');
+          } else {
+            perfEl.classList.remove('accent');
+            perfEl.classList.add('danger');
+          }
+        }
+      })();
+
 
       renderUserYearSection(app, d);
       renderPasswordChange(app);
