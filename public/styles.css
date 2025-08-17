@@ -1,5 +1,5 @@
 
-:root{ --bg:#0b1220; --card:#111a2e; --text:#e9eef7; --muted:#90a0bf; --accent:#6ad1ff; }
+
 *{ box-sizing:border-box; }
 body{ margin:0; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif; background:var(--bg); color:var(--text); }
 .app{ max-width:1100px; margin:40px auto; padding:0 16px; }
@@ -30,52 +30,24 @@ button:disabled{ opacity:.6; cursor:not-allowed; }
 .brand-title{ font-size:18px; font-weight:800; letter-spacing:.02em; }
 
 
-/* Minor polish */
-.btn, button{
-  transition: transform .02s ease, box-shadow .2s ease;
-}
-.btn:hover, button:hover{ transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.25); }
-.card h1, .brand-title{ margin: 0; }
+/* Brand overrides */
+body{ background:var(--bg); color:var(--text); }
+.card{ background:var(--card); box-shadow:0 8px 30px rgba(0,0,0,.35); }
+input,select,button{ background:#2a2a2a; border:1px solid #3a3a3a; color:var(--text); }
+button{ background:linear-gradient(135deg, var(--accent), #0d5f34); color:#eafff5; }
+a{ color:var(--accent); }
 
-/* Header card spacing */
-.card .row:first-child{ align-items:center; }
+/* Uniform type scale */
+h1{ font-size:28px; }
+h2{ font-size:22px; }
+h3{ font-size:18px; }
+label, .label{ font-size:12px; }
+.value{ font-size:20px; }
 
+/* Performance colors */
+.pos{ color:var(--accent); }
+.neg{ color:var(--danger); }
+.neutral{ opacity:.9; }
 
-/* Uniform font sizes */
-body, input, select, button, .table td, .table th{
-  font-size:14px;
-  line-height:1.5;
-}
-h1{ font-size:22px; }
-h2{ font-size:18px; }
-h3{ font-size:16px; }
-
-/* Performance value coloring */
-.stat.perf-big .value.positive{ color: var(--accent); }
-.stat.perf-big .value.negative{ color: var(--danger); }
-
-
-/* --- Brand: typography & helpers --- */
-:root{ --radius:14px; }
-
-/* Headings */
-h1,h2,h3{ line-height:1.2; font-weight:800; margin:0 0 8px 0; }
-h1{ font-size:22px; }
-h2{ font-size:18px; }
-h3{ font-size:16px; }
-
-/* Stats blocks — uniform sizes */
-.stat .label{ font-size:12px; font-weight:600; color:var(--muted); }
-.stat .value{ font-size:28px; font-weight:800; }
-.stat.perf-big .value{ font-size:28px; font-weight:900; } /* keep same size for consistency */
-
-/* Tables */
-.table th,.table td{ font-size:14px; }
-
-/* Helpers */
-.accent{ color:var(--accent); }
-.danger{ color:var(--danger); }
-
-/* Card rounding for a modern look */
-.card{ border-radius: var(--radius); }
-button, input{ border-radius: 10px; }
+/* Inputs */
+input::placeholder{ color:#cbd5e1; opacity:.8; }

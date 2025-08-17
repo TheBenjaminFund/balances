@@ -1,9 +1,8 @@
-/* Brand theme — THE BENJAMIN FUND */
 :root{
   --bg:#1e1e1e;
-  --card:#232323;
+  --card:#242424;
   --text:#ffffff;
   --muted:#b3b3b3;
   --accent:#04a156;
-  --danger:#e14a4a;
+  --danger:#ff4d4d;
 }
