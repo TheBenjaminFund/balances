@@ -11,7 +11,6 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
@@ -22,11 +21,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: true, credentials: true }));
-app.use(helmet({
-  crossOriginResourcePolicy: false,
-}));
+app.use(helmet({ crossOriginResourcePolicy: false }));
 
-// ---- Persistent SQLite path ----
+// Persistent SQLite path
 let dataDir = process.env.DATA_DIR;
 try {
   if (!dataDir) dataDir = path.join(__dirname, 'data');
@@ -40,7 +37,7 @@ const dbFile = path.join(dataDir, 'data.sqlite');
 console.log('SQLite DB path:', dbFile);
 const db = new sqlite3.Database(dbFile);
 
-// ---- DB init ----
+// DB init
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,6 +56,23 @@ db.serialize(() => {
     value TEXT
   )`);
 
+  // Migrate existing 'users' to add 2024 columns if missing
+  db.all("PRAGMA table_info(users)", [], (e, cols) => {
+    if (e) return console.error('PRAGMA error:', e);
+    const names = (cols || []).map(c => c.name);
+    const jobs = [];
+    if (!names.includes('year_2024_deposits_cents')) {
+      jobs.push("ALTER TABLE users ADD COLUMN year_2024_deposits_cents INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!names.includes('year_2024_ending_balance_cents')) {
+      jobs.push("ALTER TABLE users ADD COLUMN year_2024_ending_balance_cents INTEGER NOT NULL DEFAULT 0");
+    }
+    (function run(i){
+      if (i >= jobs.length) return;
+      db.run(jobs[i], [], () => run(i+1));
+    })(0);
+  });
+
   // Ensure admin user exists
   if (ADMIN_EMAIL) {
     db.get("SELECT id FROM users WHERE email = ?", [ADMIN_EMAIL], (err, row) => {
@@ -68,39 +82,34 @@ db.serialize(() => {
         const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
         db.run("INSERT INTO users(email, password_hash, role) VALUES(?,?,?)",
           [ADMIN_EMAIL, hash, 'admin'],
-          (e) => { if (e) console.error('Error creating admin:', e); }
+          (e2) => { if (e2) console.error('Error creating admin:', e2); }
         );
       }
     });
   }
 });
 
-// ---- Auth helpers ----
+// Auth helpers
 function signToken(user) {
   return jwt.sign({ sub: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
 }
-
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'missing token' });
   try {
-    const dec = jwt.verify(token, JWT_SECRET);
-    req.user = dec;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch {
     return res.status(401).json({ error: 'invalid token' });
   }
 }
-
 function adminOnly(req, res, next) {
   if (req.user?.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
   next();
 }
 
-// ---- Routes ----
-
-// Login
+// Routes
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
@@ -121,15 +130,17 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
-// Me
 app.get('/api/me', auth, (req, res) => {
-  db.get("SELECT id,email,role,balance_cents,deposit_cents,year_2024_deposits_cents,year_2024_ending_balance_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
-    if (err || !row) return res.status(404).json({ error: 'Not found' });
-    res.json(row);
-  });
+  db.get(
+    "SELECT id,email,role,balance_cents,deposit_cents,year_2024_deposits_cents,year_2024_ending_balance_cents FROM users WHERE id = ?",
+    [req.user.sub],
+    (err, row) => {
+      if (err || !row) return res.status(404).json({ error: 'Not found' });
+      res.json(row);
+    }
+  );
 });
 
-// Change own password
 app.patch('/api/me/password', auth, (req, res) => {
   const { current_password, new_password } = req.body || {};
   if (!current_password || !new_password) return res.status(400).json({ error: 'Missing fields' });
@@ -145,12 +156,16 @@ app.patch('/api/me/password', auth, (req, res) => {
   });
 });
 
-// --- Admin: users list/create/reset/delete & fields ---
+// Admin: users
 app.get('/api/admin/users', auth, adminOnly, (req, res) => {
-  db.all("SELECT id,email,role,balance_cents,deposit_cents,year_2024_deposits_cents,year_2024_ending_balance_cents,created_at FROM users ORDER BY created_at DESC", [], (err, rows) => {
-    if (err) return res.status(500).json({ error: 'DB error' });
-    res.json(rows);
-  });
+  db.all(
+    "SELECT id,email,role,balance_cents,deposit_cents,year_2024_deposits_cents,year_2024_ending_balance_cents,created_at FROM users ORDER BY created_at DESC",
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: 'DB error' });
+      res.json(rows);
+    }
+  );
 });
 
 app.post('/api/admin/users', auth, adminOnly, (req, res) => {
@@ -222,26 +237,29 @@ app.patch('/api/admin/users/:id/year/2024', auth, adminOnly, (req, res) => {
   });
 });
 
-// --- Admin: settings (last_updated only) ---
+// Admin settings: last_updated only
 app.get('/api/admin/last-updated', auth, adminOnly, (req, res) => {
   db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, row) => {
     if (e) return res.status(500).json({ error: 'DB error' });
     res.json({ last_updated: row?.value || null });
   });
 });
-
 app.post('/api/admin/last-updated', auth, adminOnly, (req, res) => {
   const { last_updated } = req.body || {};
   if (!last_updated || typeof last_updated !== 'string') {
     return res.status(400).json({ error: 'last_updated string required' });
   }
-  db.run("INSERT INTO settings(key,value) VALUES('last_updated',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [last_updated.trim()], (e) => {
-    if (e) return res.status(500).json({ error: 'DB error' });
-    res.json({ saved: true, last_updated: last_updated.trim() });
-  });
+  db.run(
+    "INSERT INTO settings(key,value) VALUES('last_updated',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    [last_updated.trim()],
+    (e) => {
+      if (e) return res.status(500).json({ error: 'DB error' });
+      res.json({ saved: true, last_updated: last_updated.trim() });
+    }
+  );
 });
 
-// --- Public stats (for hero) ---
+// Public stats for hero
 app.get('/api/public-stats', (req, res) => {
   db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, lu) => {
     if (e) return res.status(500).json({ error: 'DB error' });
@@ -249,7 +267,7 @@ app.get('/api/public-stats', (req, res) => {
   });
 });
 
-// Static files
+// Static
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
