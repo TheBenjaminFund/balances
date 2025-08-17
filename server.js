@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -14,24 +13,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 dotenv.config();
-const app = express();
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'DKEfBpsAkMzAjyj4Boqkge7DTAE3uJahHNhmFQCjJOU';
-const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'matthew.benjamin@thebenjaminfund.org').toLowerCase();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'GDGLfomUCV3jfnXyZEHK2A';
 
-app.use(helmet());
+const PORT = process.env.PORT || 3000;
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase();
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
+
+const app = express();
 app.use(express.json());
 app.use(cors({ origin: true, credentials: true }));
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+}));
 
+// ---- Persistent SQLite path ----
 let dataDir = process.env.DATA_DIR;
 try {
-  if (!dataDir) {
-    dataDir = path.join(__dirname, 'data');
-  }
+  if (!dataDir) dataDir = path.join(__dirname, 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 } catch (e) {
-  console.warn('DATA_DIR not usable, falling back to local ./data:', e.message);
+  console.warn('DATA_DIR not usable, falling back to ./data:', e.message);
   dataDir = path.join(__dirname, 'data');
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 }
@@ -39,20 +40,7 @@ const dbFile = path.join(dataDir, 'data.sqlite');
 console.log('SQLite DB path:', dbFile);
 const db = new sqlite3.Database(dbFile);
 
-// --- DB init & migrations ---
-
-// --- Add 2024 columns if missing ---
-db.all("PRAGMA table_info(users)", [], (e, cols) => {
-  const names = (cols||[]).map(c=>c.name);
-  const jobs = [];
-  if (!names.includes('year_2024_deposits_cents')) jobs.push("ALTER TABLE users ADD COLUMN year_2024_deposits_cents INTEGER DEFAULT 0");
-  if (!names.includes('year_2024_ending_balance_cents')) jobs.push("ALTER TABLE users ADD COLUMN year_2024_ending_balance_cents INTEGER DEFAULT 0");
-  (function run(i){
-    if (i>=jobs.length) return;
-    db.run(jobs[i], [], ()=> run(i+1));
-  })(0);
-});
-
+// ---- DB init ----
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,6 +49,8 @@ db.serialize(() => {
     role TEXT NOT NULL DEFAULT 'user',
     balance_cents INTEGER NOT NULL DEFAULT 0,
     deposit_cents INTEGER NOT NULL DEFAULT 0,
+    year_2024_deposits_cents INTEGER NOT NULL DEFAULT 0,
+    year_2024_ending_balance_cents INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
@@ -69,52 +59,52 @@ db.serialize(() => {
     value TEXT
   )`);
 
-  // Add deposit_cents column if it doesn't exist
-  db.all("PRAGMA table_info(users)", [], (err, rows) => {
-    if (!err) {
-      const hasDeposit = rows.some(r => (r.name || r.cid) && r.name === 'deposit_cents');
-      if (!hasDeposit) {
-        db.run("ALTER TABLE users ADD COLUMN deposit_cents INTEGER NOT NULL DEFAULT 0");
+  // Ensure admin user exists
+  if (ADMIN_EMAIL) {
+    db.get("SELECT id FROM users WHERE email = ?", [ADMIN_EMAIL], (err, row) => {
+      if (err) {
+        console.error('Error checking admin user:', err);
+      } else if (!row) {
+        const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
+        db.run("INSERT INTO users(email, password_hash, role) VALUES(?,?,?)",
+          [ADMIN_EMAIL, hash, 'admin'],
+          (e) => { if (e) console.error('Error creating admin:', e); }
+        );
       }
-    }
-  });
-
-  // Seed admin if missing
-  db.get("SELECT * FROM users WHERE email = ?", [ADMIN_EMAIL], (err, row) => {
-    if (err) { console.error(err); return; }
-    if (!row) {
-      const hash = bcrypt.hashSync(ADMIN_PASSWORD, 10);
-      db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents) VALUES (?,?,?,?,?)",
-        [ADMIN_EMAIL, hash, 'admin', 0, 0],
-        (e) => { if (e) console.error("Admin seed error", e); else console.log("Seeded admin:", ADMIN_EMAIL); }
-      );
-    } else {
-      console.log("Admin exists:", ADMIN_EMAIL);
-    }
-  });
+    });
+  }
 });
 
-// Helpers
+// ---- Auth helpers ----
 function signToken(user) {
-  return jwt.sign({ sub: user.id, role: user.role, email: user.email }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ sub: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
 }
+
 function auth(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Missing token' });
-  try { req.user = jwt.verify(token, JWT_SECRET); next(); }
-  catch { return res.status(401).json({ error: 'Invalid token' }); }
+  const h = req.headers.authorization || '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'missing token' });
+  try {
+    const dec = jwt.verify(token, JWT_SECRET);
+    req.user = dec;
+    next();
+  } catch {
+    return res.status(401).json({ error: 'invalid token' });
+  }
 }
+
 function adminOnly(req, res, next) {
-  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  if (req.user?.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
   next();
 }
 
-// --- Auth ---
+// ---- Routes ----
+
+// Login
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  db.get("SELECT * FROM users WHERE email = ?", [email.toLowerCase()], (err, row) => {
+  db.get("SELECT * FROM users WHERE email = ?", [String(email).toLowerCase()], (err, row) => {
     if (err || !row) return res.status(401).json({ error: 'Invalid credentials' });
     const ok = bcrypt.compareSync(password, row.password_hash);
     if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
@@ -131,8 +121,15 @@ app.post('/api/auth/login', (req, res) => {
   });
 });
 
+// Me
+app.get('/api/me', auth, (req, res) => {
+  db.get("SELECT id,email,role,balance_cents,deposit_cents,year_2024_deposits_cents,year_2024_ending_balance_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
+    if (err || !row) return res.status(404).json({ error: 'Not found' });
+    res.json(row);
+  });
+});
 
-// User can update own password
+// Change own password
 app.patch('/api/me/password', auth, (req, res) => {
   const { current_password, new_password } = req.body || {};
   if (!current_password || !new_password) return res.status(400).json({ error: 'Missing fields' });
@@ -148,39 +145,23 @@ app.patch('/api/me/password', auth, (req, res) => {
   });
 });
 
-app.get('/api/me', auth, (req, res) => {
-  db.get("SELECT id, email, role, balance_cents, deposit_cents FROM users WHERE id = ?", [req.user.sub], (err, row) => {
-    if (err || !row) return res.status(404).json({ error: 'Not found' });
-    // Read last_updated for user display
-    db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, lu) => {
-      res.json({
-        user: { id: row.id, email: row.email, role: row.role },
-        balance_cents: row.balance_cents,
-        deposit_cents: row.deposit_cents,
-        last_updated: lu?.value || null
-      });
-    });
-  });
-});
-
-// --- Admin: users ---
+// --- Admin: users list/create/reset/delete & fields ---
 app.get('/api/admin/users', auth, adminOnly, (req, res) => {
-  db.all("SELECT id, email, role, balance_cents, deposit_cents, created_at FROM users ORDER BY created_at DESC", [], (err, rows) => {
+  db.all("SELECT id,email,role,balance_cents,deposit_cents,year_2024_deposits_cents,year_2024_ending_balance_cents,created_at FROM users ORDER BY created_at DESC", [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json(rows);
   });
 });
 
 app.post('/api/admin/users', auth, adminOnly, (req, res) => {
-  const { email, password, role = 'user' } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
-  const hash = bcrypt.hashSync(password, 10);
-  db.run("INSERT INTO users (email, password_hash, role, balance_cents, deposit_cents) VALUES (?,?,?,?,?)",
-    [email.toLowerCase(), hash, role, 0, 0],
-    function(err) {
-      if (err) return res.status(400).json({ error: 'User exists or invalid' });
-      res.json({ created: true, id: this.lastID, email: email.toLowerCase(), role, balance_cents: 0, deposit_cents: 0, password });
-    });
+  const { email, password } = req.body || {};
+  if (!email) return res.status(400).json({ error: 'email required' });
+  const pwd = password || Math.floor(100000 + Math.random()*900000).toString();
+  const hash = bcrypt.hashSync(pwd, 10);
+  db.run("INSERT INTO users(email, password_hash, role) VALUES(?,?,?)", [email.toLowerCase(), hash, 'user'], function(err){
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ id: this.lastID, email: email.toLowerCase(), temp_password: password ? null : pwd });
+  });
 });
 
 app.post('/api/admin/users/:id/reset-password', auth, adminOnly, (req, res) => {
@@ -214,6 +195,15 @@ app.patch('/api/admin/users/:id/balance', auth, adminOnly, (req, res) => {
   });
 });
 
+app.patch('/api/admin/users/:id/deposit', auth, adminOnly, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { deposit_cents } = req.body || {};
+  if (Number.isNaN(id) || !Number.isFinite(deposit_cents)) return res.status(400).json({ error: 'Bad input' });
+  db.run("UPDATE users SET deposit_cents = ? WHERE id = ?", [Math.round(deposit_cents), id], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ updated: this.changes > 0 });
+  });
+});
 
 app.patch('/api/admin/users/:id/year/2024', auth, adminOnly, (req, res) => {
   const id = parseInt(req.params.id, 10);
@@ -232,41 +222,34 @@ app.patch('/api/admin/users/:id/year/2024', auth, adminOnly, (req, res) => {
   });
 });
 
-app.patch('/api/admin/users/:id/deposit', auth, adminOnly, (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const { deposit_cents } = req.body || {};
-  if (Number.isNaN(id) || !Number.isFinite(deposit_cents)) return res.status(400).json({ error: 'Bad input' });
-  db.run("UPDATE users SET deposit_cents = ? WHERE id = ?", [Math.round(deposit_cents), id], function(err) {
-    if (err) return res.status(500).json({ error: 'DB error' });
-    res.json({ updated: this.changes > 0 });
+// --- Admin: settings (last_updated only) ---
+app.get('/api/admin/last-updated', auth, adminOnly, (req, res) => {
+  db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, row) => {
+    if (e) return res.status(500).json({ error: 'DB error' });
+    res.json({ last_updated: row?.value || null });
   });
 });
 
-// --- Admin: settings (last_updated, /*removed_share_price*/) ---
-app.get('/api/admin/last-updated', auth, adminOnly, (req, res) => {
-  db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, row) => res.json({ last_updated: row?.value || null }));
-});
 app.post('/api/admin/last-updated', auth, adminOnly, (req, res) => {
   const { last_updated } = req.body || {};
-  if (!last_updated || typeof last_updated !== 'string') return res.status(400).json({ error: 'last_updated string required' });
-  db.run("INSERT INTO settings(key,value) VALUES('last_updated',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [last_updated], (e) => {
+  if (!last_updated || typeof last_updated !== 'string') {
+    return res.status(400).json({ error: 'last_updated string required' });
+  }
+  db.run("INSERT INTO settings(key,value) VALUES('last_updated',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [last_updated.trim()], (e) => {
     if (e) return res.status(500).json({ error: 'DB error' });
-    res.json({ saved: true, last_updated });
-  });
-});
-    if (e) return res.status(500).json({ error: 'DB error' });
-    res.json({ saved: true });
+    res.json({ saved: true, last_updated: last_updated.trim() });
   });
 });
 
-// --- Public stats for hero ---
+// --- Public stats (for hero) ---
 app.get('/api/public-stats', (req, res) => {
-  db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e2, lu) => {
+  db.get("SELECT value FROM settings WHERE key = 'last_updated'", [], (e, lu) => {
+    if (e) return res.status(500).json({ error: 'DB error' });
     res.json({ last_updated: lu?.value || null });
   });
 });
 
-// Static
+// Static files
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
