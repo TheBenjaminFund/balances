@@ -265,11 +265,6 @@ app.get('/api/public-stats', (req, res) => {
     res.json({ last_updated: lu?.value || null });
   });
 });
-  });
-});
-    });
-  });
-});
 
 // Static
 app.use(express.static(path.join(__dirname, 'public')));
