@@ -60,8 +60,8 @@ function renderUserYearSection(container, d){
   card.innerHTML = `
     <h2>2024 Results</h2>
     <div class="stats four">
-      <div class="stat"><div class="label">2024 Deposits</div><div class="value">${fmtMoney(dep)}</div></div>
-      <div class="stat"><div class="label">2024 Ending Balance</div><div class="value">${fmtMoney(end)}</div></div>
+      <div class="stat"><div class="label">2024 Deposits</div><div class="value">${fmtMoney(dep)}</span></div></div>
+      <div class="stat"><div class="label">2024 Ending Balance</div><div class="value">${fmtMoney(end)}</span></div></div>
       <div class="stat perf-big"><div class="label">2024 Performance ($)</div><div class="value"><span class="${tone}">${pl===null?'—':fmtMoney(pl)}</span></div></div>
       <div class="stat perf-big"><div class="label">2024 Performance (%)</div><div class="value"><span class="${tone}">${pctStr}</span></div></div>
     </div>
@@ -253,7 +253,7 @@ function renderHome(){
 
   const header = document.createElement('div'); header.className='card';
   header.innerHTML = `<div class="row" style="justify-content:space-between">
-    <h1>Benjamin Fund</h1>
+    <div class="logo-wrap"><img class="logo" src="/logo.png" alt="The Benjamin Fund logo"></div>
     <div class="row">
       <div class="subtle">${state.user.email} (${state.user.role})</div>
       <button id="logout">Logout</button>
@@ -271,10 +271,12 @@ function renderHome(){
       const dep = d.deposit_cents ?? 0;
       const pl = (bal - dep);
       const pct = dep > 0 ? (pl/dep)*100 : null;
+      const tone = (pct === null) ? 'neutral' : (pl >= 0 ? 'pos' : 'neg');
       card.innerHTML = `
+        <h2>Current Results</h2>
         <div class="stats">
-          <div class="stat"><div class="label">Balance</div><div class="value" id="bal">${fmtMoney(bal)}</div></div>
-          <div class="stat"><div class="label">Deposits</div><div class="value" id="dep">${fmtMoney(dep)}</div></div>
+          <div class="stat"><div class="label">Balance</div<div class="value" id="bal">${fmtMoney(bal)}</span></div></div>
+          <div class="stat"><div class="label">Deposits</div><div class="value" id="dep">${fmtMoney(dep)}</span></div></div>
           <div class="stat perf-big"><div class="label">Performance</div><div class="value">${pl>=0?'+':''}${pct===null?'—':pct.toFixed(2)+'%'} (${fmtMoney(pl)})</div></div>
         </div>
         <div class=\"subtle\" id=\"currentYearNote\"></div>`;
