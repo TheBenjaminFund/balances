@@ -161,7 +161,7 @@ function renderAdmin(container){
   async function fetchUsers(){
     const r = await fetch('/api/admin/users', { headers:{ 'Authorization':'Bearer '+state.token } });
     const list = await r.json();
-    const table = document.createElement('table'); table.className='table mono';
+    const table = document.createElement('table'); table.className='table mono admin-table';
     table.innerHTML = `
       <thead><tr>
         <th>ID</th><th>Email</th><th>Role</th>
@@ -193,8 +193,10 @@ function renderAdmin(container){
           </div>
         </td>
         <td>
-          <button id="rp${u.id}">Reset Password</button>
-          <button id="del${u.id}">Delete</button>
+          <div class="stack">
+            <button id="rp${u.id}">Reset Password</button>
+            <button id="del${u.id}">Delete</button>
+          </div>
         </td>`;
 
       // Save totals (+ optional 2024)
