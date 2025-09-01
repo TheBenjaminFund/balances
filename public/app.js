@@ -254,12 +254,28 @@ function renderAdmin(container){
 
 function renderHome(){
   app.innerHTML = '';
+  // Inject 'Last updated' section (public)
+  renderLastUpdatedSection(app);
 
   // Use the persistent site header for account info + logout
   const acct = document.getElementById('siteHeaderAcct');
   if (acct){
     acct.innerHTML = `<div class="row"><div class="subtle">${state.user.email} (${state.user.role})</div><button id="logout">Logout</button></div>`;
-    acct.querySelector('#logout').onclick = ()=>{ state.token=null; state.user=null; acct.innerHTML=''; renderLogin(); };
+    acct.querySelector('#logout').onclick = ()=>{ state.token=null; state.user=null; acct.innerHTML=''; 
+// Minimal helper to render the publicly-configured "Last updated" date
+async function renderLastUpdatedSection(parentEl){
+  try{
+    const r = await fetch('/api/public-stats');
+    const j = await r.json();
+    if (j && j.last_updated){
+      const card = document.createElement('div'); card.className = 'card';
+      card.innerHTML = `<div>Last updated: <strong>${j.last_updated}</strong></div>`;
+      parentEl.appendChild(card);
+    }
+  }catch(e){ /* silent fail */ }
+}
+
+renderLogin(); };
   }
 
   // Load 'me' fresh
@@ -303,6 +319,20 @@ function renderHome(){
         renderAdmin(app);
       }
     }).catch(()=>toast('Failed to load profile', false));
+}
+
+
+// Minimal helper to render the publicly-configured "Last updated" date
+async function renderLastUpdatedSection(parentEl){
+  try{
+    const r = await fetch('/api/public-stats');
+    const j = await r.json();
+    if (j && j.last_updated){
+      const card = document.createElement('div'); card.className = 'card';
+      card.innerHTML = `<div>Last updated: <strong>${j.last_updated}</strong></div>`;
+      parentEl.appendChild(card);
+    }
+  }catch(e){ /* silent fail */ }
 }
 
 renderLogin();
