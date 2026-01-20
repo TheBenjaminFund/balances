@@ -62,14 +62,14 @@ function renderUserYearSection(container, d){
   const card = document.createElement('div');
   card.className = 'card';
   card.innerHTML = `
-    <h2>2025 Results</h2>
+    <h2>2024 Results</h2>
     <div class="stats four">
-      <div class="stat"><div class="label">2025 Deposits</div><div class="value">${fmtMoney(dep)}</div></div>
-      <div class="stat"><div class="label">2025 Ending Balance</div><div class="value">${fmtMoney(end)}</div></div>
-      <div class="stat perf-big"><div class="label">2025 Performance ($)</div><div class="value"><span class="${tone}">${pl===null?'—':fmtMoney(pl)}</div></div>
-      <div class="stat perf-big"><div class="label">2025 Performance (%)</div><div class="value"><span class="${tone}">${pctStr}</div></div>
+      <div class="stat"><div class="label">2024 Deposits</div><div class="value">${fmtMoney(dep)}</div></div>
+      <div class="stat"><div class="label">2024 Ending Balance</div><div class="value">${fmtMoney(end)}</div></div>
+      <div class="stat perf-big"><div class="label">2024 Performance ($)</div><div class="value"><span class="${tone}">${pl===null?'—':fmtMoney(pl)}</div></div>
+      <div class="stat perf-big"><div class="label">2024 Performance (%)</div><div class="value"><span class="${tone}">${pctStr}</div></div>
     </div>
-    <div class="subtle">2026 / Current Year figures appear in the main tiles above.</div>
+    <div class="subtle">2025 / Current Year figures appear in the main tiles above.</div>
   `;
   container.appendChild(card);
 }
@@ -155,53 +155,18 @@ function renderAdmin(container){
 
   // Users table
   const users = document.createElement('div'); users.className='card';
-  users.innerHTML = `
-    <div class="admin-users-head">
-      <h3>Users</h3>
-      <div class="admin-sort row">
-        <label class="subtle" for="sortUsers" style="margin:0">Sort:</label>
-        <select id="sortUsers">
-          <option value="created_desc">Newest first</option>
-          <option value="created_asc">Oldest first</option>
-          <option value="email_asc">Email A → Z</option>
-          <option value="email_desc">Email Z → A</option>
-          <option value="id_asc">ID ascending</option>
-          <option value="id_desc">ID descending</option>
-        </select>
-      </div>
-    </div>
-    <div id="usersWrap"></div>`;
+  users.innerHTML = `<h3>Users</h3><div id="usersWrap"></div>`;
   root.appendChild(users);
-
-  // Admin-side sort preference (client-side only)
-  let sortMode = 'created_desc';
 
   async function fetchUsers(){
     const r = await fetch('/api/admin/users', { headers:{ 'Authorization':'Bearer '+state.token } });
-    let list = await r.json();
-
-    // Client-side sorting to keep backend/API unchanged
-    const normEmail = (e) => String(e || '').toLowerCase();
-    list = [...list].sort((a,b)=>{
-      switch(sortMode){
-        case 'created_asc': return String(a.created_at||'').localeCompare(String(b.created_at||''));
-        case 'created_desc': return String(b.created_at||'').localeCompare(String(a.created_at||''));
-        case 'email_asc': return normEmail(a.email).localeCompare(normEmail(b.email));
-        case 'email_desc': return normEmail(b.email).localeCompare(normEmail(a.email));
-        case 'id_desc': return (b.id||0) - (a.id||0);
-        case 'id_asc':
-        default: return (a.id||0) - (b.id||0);
-      }
-    });
-
-    const tableWrap = document.createElement('div');
-    tableWrap.className = 'table-wrap';
+    const list = await r.json();
     const table = document.createElement('table'); table.className='table mono';
     table.innerHTML = `
       <thead><tr>
         <th>ID</th><th>Email</th><th>Role</th>
         <th>Balance</th><th>Deposit</th>
-        <th>2025 Deposits</th><th>2025 Ending</th>
+        <th>2024 Deposits</th><th>2024 Ending</th>
         <th>Update</th><th>Actions</th>
       </tr></thead>
       <tbody></tbody>`;
@@ -217,21 +182,19 @@ function renderAdmin(container){
         <td>${fmtMoney(u.year_2024_deposits_cents)}</td>
         <td>${fmtMoney(u.year_2024_ending_balance_cents)}</td>
         <td>
-          <div class="admin-update">
-            <input placeholder="New balance (USD)" id="b${u.id}" />
-            <input placeholder="New deposit (USD)" id="d${u.id}" />
-            <button id="s${u.id}" class="admin-save">Save</button>
+          <div class="row" style="gap:6px; flex-wrap:wrap">
+            <input style="max-width:120px" placeholder="New bal (USD)" id="b${u.id}" />
+            <input style="max-width:120px" placeholder="New dep (USD)" id="d${u.id}" />
+            <button id="s${u.id}">Save</button>
           </div>
-          <div class="admin-update admin-update-year">
-            <input placeholder="New 2025 deposits (USD)" id="ydep${u.id}" />
-            <input placeholder="New 2025 ending (USD)" id="yend${u.id}" />
+          <div class="row" style="gap:6px; flex-wrap:wrap; margin-top:6px">
+            <input style="max-width:140px" placeholder="New 2024 dep (USD)" id="ydep${u.id}" />
+            <input style="max-width:140px" placeholder="New 2024 end (USD)" id="yend${u.id}" />
           </div>
         </td>
         <td>
-          <div class="admin-actions">
-            <button id="rp${u.id}">Reset Password</button>
-            <button id="del${u.id}" class="danger">Delete</button>
-          </div>
+          <button id="rp${u.id}">Reset Password</button>
+          <button id="del${u.id}">Delete</button>
         </td>`;
 
       // Save totals (+ optional 2024)
@@ -268,8 +231,7 @@ function renderAdmin(container){
       tbody.appendChild(tr);
     });
     users.querySelector('#usersWrap').innerHTML = '';
-    tableWrap.appendChild(table);
-    users.querySelector('#usersWrap').appendChild(tableWrap);
+    users.querySelector('#usersWrap').appendChild(table);
   }
 
   // load settings (only last-updated) and users
@@ -280,13 +242,6 @@ function renderAdmin(container){
     }catch(e){}
     fetchUsers();
   })();
-
-  // Sort selector
-  const sortSel = users.querySelector('#sortUsers');
-  if (sortSel){
-    sortSel.value = sortMode;
-    sortSel.onchange = ()=>{ sortMode = sortSel.value; fetchUsers(); };
-  }
 
   settings.querySelector('#saveSettings').onclick = async ()=>{
     const lu = settings.querySelector('#lu').value.trim();

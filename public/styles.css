@@ -18,8 +18,6 @@ button:disabled{ opacity:.6; cursor:not-allowed; }
 .stat.perf-big .value{ font-size:22px; font-weight:800; }
 .table{ width:100%; border-collapse:collapse; }
 .table th,.table td{ padding:10px; text-align:left; border-bottom:1px solid #223; font-size:14px; }
-.table-wrap{ width:100%; overflow-x:auto; }
-.table-wrap .table{ min-width: 980px; }
 .mono{ font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; }
 .subtle{ color:var(--muted); font-size:13px; margin-top:6px; }
 .toast{ position:fixed; right:16px; bottom:16px; background:#0e1629; border:1px solid #1f2a44; padding:10px 12px; border-radius:10px; }
@@ -67,18 +65,3 @@ input::placeholder{ color:#cbd5e1; opacity:.8; }
 .header-flex{ display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .header-flex .left{ display:flex; flex-direction:column; }
 .header-flex .acct .row{ gap:12px; }
-
-/* Admin table polish */
-.admin-users-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
-.admin-sort{ flex-wrap:wrap; gap:10px; }
-
-.admin-update{ display:grid; grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) auto; gap:8px; align-items:center; }
-.admin-update-year{ grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr); margin-top:8px; }
-.admin-update input{ width:100%; max-width:none !important; }
-.admin-save{ white-space:nowrap; }
-
-.admin-actions{ display:flex; flex-direction:column; gap:8px; align-items:stretch; }
-.admin-actions button{ width:100%; white-space:nowrap; }
-
-/* Keep the existing style, but allow a red 'danger' variant for admin delete */
-button.danger{ background:linear-gradient(135deg, #b91c1c, #ef4444); color:#fff; }

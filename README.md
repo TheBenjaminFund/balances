@@ -5,7 +5,7 @@ A lightweight Node/Express + SQLite web app for investors to view balances and p
 ## What’s Included
 - **Share price removed** entirely (backend + frontend).
 - **User password change** flow (`PATCH /api/me/password`) + UI card.
-- **2025 Results** on the investor dashboard:
+- **2024 Results** on the investor dashboard:
   - 2024 Deposits, 2024 Ending Balance, 2024 Performance ($ and %)
   - Clearly labeled as 2024-only (separate from overall totals)
 - **Admin UI** polish:
