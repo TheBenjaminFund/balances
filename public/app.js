@@ -1,5 +1,5 @@
 const app = document.getElementById('app');
-const state = { token: null, user: null, adminSelectedUserId: null };
+const state = { token: null, user: null, adminSelectedUserId: null, adminSelectedBalanceYear: null };
 
 const fmtMoney = (cents) => {
   if (cents === null || cents === undefined || Number.isNaN(Number(cents))) return '—';
@@ -45,31 +45,22 @@ function buildChartSvg(points, opts = {}) {
   if (!points || !points.length) return '<div class="empty-state">No data entered yet.</div>';
   const width = opts.width || 860;
   const height = opts.height || 300;
-  const pad = { left: 56, right: 18, top: 12, bottom: 34 };
+  const pad = { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 12, bottom: 38 };
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
-  const minX = Math.min(...xs);
-  const maxX = Math.max(...xs);
   const forcedMinY = opts.minY !== undefined ? opts.minY : Math.min(...ys);
   let minY = forcedMinY;
   let maxY = Math.max(...ys);
   if (opts.allowNegative && minY > 0) minY = 0;
   if (!opts.allowNegative) minY = Math.max(0, minY);
-  if (maxY === minY) maxY = minY + 1;
-  if (maxX === minX) {
-    const single = points[0];
-    points = [
-      { ...single, x: single.x - 1 },
-      single,
-      { ...single, x: single.x + 1 }
-    ];
+  if (maxY === minY) {
+    if (maxY === 0) maxY = 1;
+    else if (maxY > 0) minY = Math.min(0, minY);
+    else maxY = 0;
   }
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
-  const xScale = (x) => pad.left + ((x - Math.min(...points.map((p) => p.x))) / (Math.max(...points.map((p) => p.x)) - Math.min(...points.map((p) => p.x)))) * plotW;
   const yScale = (y) => pad.top + (1 - ((y - minY) / (maxY - minY))) * plotH;
-  const line = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(' ');
-  const area = `${line} L ${xScale(points[points.length - 1].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} L ${xScale(points[0].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} Z`;
   const zeroY = minY <= 0 && maxY >= 0 ? yScale(0) : null;
   const ticks = 4;
   const yTickMarkup = Array.from({ length: ticks + 1 }, (_, i) => {
@@ -77,27 +68,53 @@ function buildChartSvg(points, opts = {}) {
     const y = yScale(v);
     return `
       <line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" class="chart-grid" />
-      <text x="${pad.left - 8}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
+      <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
   }).join('');
-  const xLabels = [points[0], points[Math.floor((points.length - 1) / 2)], points[points.length - 1]].filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
+
+  if (opts.type === 'bar') {
+    const step = plotW / Math.max(points.length, 1);
+    const barW = Math.min(72, Math.max(24, step * 0.52));
+    const bars = points.map((p, i) => {
+      const centerX = pad.left + (step * i) + (step / 2);
+      const baseY = zeroY === null ? yScale(minY) : zeroY;
+      const y = yScale(p.y);
+      const x = centerX - barW / 2;
+      const h = Math.max(1, Math.abs(baseY - y));
+      return `
+        <rect x="${x.toFixed(1)}" y="${Math.min(y, baseY).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" class="chart-bar ${p.y < 0 ? 'negative' : 'positive'}" />
+        <text x="${centerX.toFixed(1)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`;
+    }).join('');
+
+    return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
+      ${yTickMarkup}
+      ${zeroY !== null ? `<line x1="${pad.left}" y1="${zeroY}" x2="${width - pad.right}" y2="${zeroY}" class="chart-zero" />` : ''}
+      ${bars}
+    </svg>`;
+  }
+
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  let linePoints = points;
+  if (maxX === minX) {
+    const single = points[0];
+    linePoints = [
+      { ...single, x: single.x - 1 },
+      single,
+      { ...single, x: single.x + 1 }
+    ];
+  }
+  const xScale = (x) => pad.left + ((x - Math.min(...linePoints.map((p) => p.x))) / (Math.max(...linePoints.map((p) => p.x)) - Math.min(...linePoints.map((p) => p.x)))) * plotW;
+  const line = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(' ');
+  const area = `${line} L ${xScale(linePoints[linePoints.length - 1].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} L ${xScale(linePoints[0].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} Z`;
+  const xLabels = [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]].filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
     .map((p) => `<text x="${xScale(p.x)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`).join('');
-  const bars = opts.type === 'bar' ? points.map((p) => {
-    const baseY = zeroY === null ? yScale(minY) : zeroY;
-    const y = yScale(p.y);
-    const barW = Math.max(18, plotW / Math.max(points.length * 1.8, 8));
-    const x = xScale(p.x) - barW / 2;
-    const h = Math.abs(baseY - y);
-    return `
-      <rect x="${x.toFixed(1)}" y="${Math.min(y, baseY).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" class="chart-bar ${p.y < 0 ? 'negative' : 'positive'}" />
-      <text x="${xScale(p.x)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`;
-  }).join('') : '';
 
   return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
     ${yTickMarkup}
     ${zeroY !== null ? `<line x1="${pad.left}" y1="${zeroY}" x2="${width - pad.right}" y2="${zeroY}" class="chart-zero" />` : ''}
-    ${opts.type === 'bar' ? bars : `<path d="${area}" class="chart-area" /><path d="${line}" class="chart-line" />`}
-    ${opts.type === 'bar' ? '' : points.map((p) => `<circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="3.5" class="chart-dot" />`).join('')}
-    ${opts.type === 'bar' ? '' : xLabels}
+    <path d="${area}" class="chart-area" /><path d="${line}" class="chart-line" />
+    ${linePoints.map((p) => `<circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="3.5" class="chart-dot" />`).join('')}
+    ${xLabels}
   </svg>`;
 }
 
@@ -515,48 +532,78 @@ function renderAdmin(container) {
     const sec = document.createElement('div');
     sec.className = 'card inner-card';
     const years = [...new Set([2024, 2025, 2026, todayYear(), ...uniqueYears(bundle.balanceHistory || [], 'as_of_date')])].sort((a, b) => a - b);
+    const defaultYear = state.adminSelectedBalanceYear && years.includes(Number(state.adminSelectedBalanceYear))
+      ? String(state.adminSelectedBalanceYear)
+      : String(years[years.length - 1] || todayYear());
     sec.innerHTML = `
       <div class="section-head">
         <div>
           <h3>Weekly Balances</h3>
           <div class="subtle">Save one year at a time. Dates are fully manual.</div>
         </div>
-        <select id="balanceYearSelect">${years.map((y) => `<option value="${y}">${y}</option>`).join('')}</select>
+        <select id="balanceYearSelect">${years.map((y) => `<option value="${y}" ${String(y) === defaultYear ? 'selected' : ''}>${y}</option>`).join('')}</select>
       </div>
       <div class="table-wrap"><table class="table mono"><thead><tr><th>Date</th><th>Balance (USD)</th><th></th></tr></thead><tbody id="balanceBody"></tbody></table></div>
+      <div class="subtle top-gap" id="balanceValidationHint">Each row must have a unique date inside the selected year.</div>
       <div class="row wrap-row top-gap"><button id="addBalanceRow">Add Balance Row</button><button id="saveBalanceRows">Save Selected Year</button></div>`;
     parent.appendChild(sec);
     const tbody = sec.querySelector('#balanceBody');
     const yearSelect = sec.querySelector('#balanceYearSelect');
+    const addButton = sec.querySelector('#addBalanceRow');
+    const saveButton = sec.querySelector('#saveBalanceRows');
+
+    const addRow = (date = '', value = '') => {
+      const tr = makeTableRow([
+        `<td><input class="date-input" type="date" value="${escapeHtml(date)}" /></td>`,
+        `<td><input class="money-input" value="${escapeHtml(value)}" placeholder="0.00" /></td>`,
+        `<td><button class="ghost-btn delete-row">Remove</button></td>`
+      ]);
+      tr.querySelector('.delete-row').onclick = () => tr.remove();
+      tbody.appendChild(tr);
+    };
 
     const drawYear = () => {
+      state.adminSelectedBalanceYear = yearSelect.value;
       tbody.innerHTML = '';
       const selected = yearSelect.value;
       const rows = (bundle.balanceHistory || []).filter((r) => String(r.as_of_date).startsWith(selected)).sort((a, b) => a.as_of_date.localeCompare(b.as_of_date));
-      const addRow = (date = '', value = '') => {
-        const tr = makeTableRow([
-          `<td><input class="date-input" type="date" value="${escapeHtml(date)}" /></td>`,
-          `<td><input class="money-input" value="${escapeHtml(value)}" placeholder="0.00" /></td>`,
-          `<td><button class="ghost-btn delete-row">Remove</button></td>`
-        ]);
-        tr.querySelector('.delete-row').onclick = () => tr.remove();
-        tbody.appendChild(tr);
-      };
       rows.forEach((r) => addRow(r.as_of_date, centsToInput(r.balance_cents)));
       if (!rows.length) addRow('', '');
-      sec.querySelector('#addBalanceRow').onclick = () => addRow('', '');
     };
 
+    addButton.onclick = () => addRow('', '');
     drawYear();
     yearSelect.onchange = drawYear;
-    sec.querySelector('#saveBalanceRows').onclick = async () => {
-      const payload = [...tbody.querySelectorAll('tr')].map((tr) => ({
-        as_of_date: tr.querySelector('.date-input').value,
-        balance_cents: toUsdInputCents(tr.querySelector('.money-input').value)
-      }));
+    saveButton.onclick = async () => {
+      const selectedYear = yearSelect.value;
+      state.adminSelectedBalanceYear = selectedYear;
+      const errors = [];
+      const seen = new Set();
+      const payload = [];
+      [...tbody.querySelectorAll('tr')].forEach((tr, idx) => {
+        const date = tr.querySelector('.date-input').value;
+        const valueRaw = tr.querySelector('.money-input').value;
+        const cents = toUsdInputCents(valueRaw);
+        if (!date && (valueRaw === '' || valueRaw === null)) return;
+        if (!date || cents === null) {
+          errors.push(`Row ${idx + 1} is missing a valid date or balance.`);
+          return;
+        }
+        if (!date.startsWith(selectedYear)) {
+          errors.push(`Row ${idx + 1} must use a ${selectedYear} date.`);
+          return;
+        }
+        if (seen.has(date)) {
+          errors.push(`Row ${idx + 1} repeats ${date}.`);
+          return;
+        }
+        seen.add(date);
+        payload.push({ as_of_date: date, balance_cents: cents });
+      });
+      if (errors.length) return toast(errors[0], false);
       try {
-        await api(`/api/admin/users/${bundle.user.id}/balance-history/${yearSelect.value}`, { method: 'PUT', body: JSON.stringify({ rows: payload }) });
-        toast(`Saved balance history for ${yearSelect.value}.`);
+        await api(`/api/admin/users/${bundle.user.id}/balance-history/${selectedYear}`, { method: 'PUT', body: JSON.stringify({ rows: payload }) });
+        toast(`Saved ${payload.length} balance row${payload.length === 1 ? '' : 's'} for ${selectedYear}.`);
         loadDetail(bundle.user.id);
       } catch (e) {
         toast(e.message || 'Save failed.', false);

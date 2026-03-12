@@ -344,12 +344,20 @@ app.put('/api/admin/users/:id/balance-history/:year', auth, adminOnly, async (re
     if (!id || !year || !rows) return res.status(400).json({ error: 'Bad input' });
     const clean = [];
     const seen = new Set();
-    for (const row of rows) {
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const rowNum = i + 1;
       const as_of_date = sanitizeDate(row?.as_of_date);
       const balance_cents = cleanMoneyCents(row?.balance_cents);
-      if (!as_of_date || balance_cents === null) continue;
-      if (!as_of_date.startsWith(String(year))) continue;
-      if (seen.has(as_of_date)) continue;
+      if (!as_of_date || balance_cents === null) {
+        return res.status(400).json({ error: `Row ${rowNum} is missing a valid date or balance` });
+      }
+      if (!as_of_date.startsWith(String(year))) {
+        return res.status(400).json({ error: `Row ${rowNum} must use a ${year} date` });
+      }
+      if (seen.has(as_of_date)) {
+        return res.status(400).json({ error: `Duplicate date found: ${as_of_date}` });
+      }
       seen.add(as_of_date);
       clean.push({ as_of_date, balance_cents });
     }
