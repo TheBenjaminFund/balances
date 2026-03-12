@@ -370,7 +370,7 @@ function renderBalanceSection(container, bundle) {
         <button class="toggle" data-view="all">All-Time</button>
       </div>
     </div>
-    <div class="stats four compact-stats" id="balanceStats"></div>
+    <div class="stats four compact-stats balance-stats" id="balanceStats"></div>
     <div class="chart-wrap" id="balanceChart"></div>`;
   container.appendChild(card);
 
@@ -383,7 +383,7 @@ function renderBalanceSection(container, bundle) {
     const rows = views[viewKey] || [];
     if (!rows.length) {
       chartEl.innerHTML = '<div class="empty-state">No weekly balance entries have been added yet.</div>';
-      statsEl.innerHTML = '<div class="stat"><div class="label">Range</div><div class="value">—</div></div><div class="stat"><div class="label">Start</div><div class="value">—</div></div><div class="stat"><div class="label">Latest</div><div class="value">—</div></div><div class="stat"><div class="label">Change</div><div class="value">—</div></div>';
+      statsEl.innerHTML = '<div class="stat"><div class="label">Range</div><div class="value">—</div></div><div class="stat"><div class="label">Start</div><div class="value">—</div></div><div class="stat"><div class="label">Latest</div><div class="value">—</div></div><div class="stat"><div class="label">Change</div><div class="value">—</div><div class="subtle">&nbsp;</div></div>';
       return;
     }
     const first = rows[0];
@@ -392,10 +392,10 @@ function renderBalanceSection(container, bundle) {
     const pct = first.balance_cents > 0 ? (delta / first.balance_cents) * 100 : null;
     const tone = pct === null ? 'neutral' : delta >= 0 ? 'pos' : 'neg';
     statsEl.innerHTML = `
-      <div class="stat"><div class="label">Range</div><div class="value small-value">${labelMap[viewKey]}</div></div>
+      <div class="stat"><div class="label">Range</div><div class="value small-value">${labelMap[viewKey]}</div><div class="subtle">${rows.length} point${rows.length === 1 ? '' : 's'}</div></div>
       <div class="stat"><div class="label">Start</div><div class="value small-value">${fmtMoney(first.balance_cents)}</div><div class="subtle">${first.as_of_date}</div></div>
       <div class="stat"><div class="label">Latest</div><div class="value small-value">${fmtMoney(last.balance_cents)}</div><div class="subtle">${last.as_of_date}</div></div>
-      <div class="stat"><div class="label">Change</div><div class="value small-value"><span class="${tone}">${fmtMoney(delta)}${pct === null ? '' : ` · ${fmtPct(pct)}`}</span></div></div>`;
+      <div class="stat change-stat"><div class="label">Change</div><div class="change-readout"><div class="change-amount ${tone}">${fmtMoney(delta)}</div><div class="change-percent ${tone}">${pct === null ? 'Percent change unavailable' : fmtPct(pct)}</div></div></div>`;
     const txMap = summarizeTransactionsByDate(bundle.transactions || []);
     const plotted = rows.map((r) => {
       const markerSummary = txMap.get(r.as_of_date);
