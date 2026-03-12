@@ -45,7 +45,7 @@ function buildChartSvg(points, opts = {}) {
   if (!points || !points.length) return '<div class="empty-state">No data entered yet.</div>';
   const width = opts.width || 860;
   const height = opts.height || 300;
-  const pad = { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 12, bottom: 38 };
+  const pad = { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
   const rawMinY = Math.min(...ys);
@@ -53,14 +53,34 @@ function buildChartSvg(points, opts = {}) {
   let minY = opts.minY !== undefined ? opts.minY : rawMinY;
   let maxY = opts.maxY !== undefined ? opts.maxY : rawMaxY;
 
-  if (opts.smartScale && opts.type !== 'bar') {
-    const range = rawMaxY - rawMinY;
-    const fallbackPad = Math.max(Math.abs(rawMaxY || 0) * 0.03, 1);
-    const yPad = range > 0 ? Math.max(range * 0.18, fallbackPad) : fallbackPad;
-    const candidateMin = rawMinY - yPad;
-    const nearZero = rawMinY <= yPad * 1.35;
-    minY = opts.minY !== undefined ? opts.minY : (nearZero ? 0 : Math.max(0, candidateMin));
-    maxY = opts.maxY !== undefined ? opts.maxY : (rawMaxY + yPad);
+  const range = rawMaxY - rawMinY;
+  const basePad = Math.max(range * 0.16, Math.abs(rawMaxY || 0) * 0.04, 1);
+
+  if (opts.smartScale) {
+    if (opts.type === 'bar') {
+      if (opts.allowNegative) {
+        if (rawMinY >= 0) {
+          minY = 0;
+          maxY = rawMaxY + basePad;
+        } else if (rawMaxY <= 0) {
+          minY = rawMinY - basePad;
+          maxY = 0;
+        } else {
+          minY = rawMinY - Math.max(basePad * 0.7, 1);
+          maxY = rawMaxY + Math.max(basePad * 0.7, 1);
+        }
+      } else {
+        minY = Math.max(0, rawMinY - basePad * 0.35);
+        maxY = rawMaxY + basePad;
+      }
+    } else {
+      const fallbackPad = Math.max(Math.abs(rawMaxY || 0) * 0.03, 1);
+      const yPad = range > 0 ? Math.max(range * 0.18, fallbackPad) : fallbackPad;
+      const candidateMin = rawMinY - yPad;
+      const nearZero = rawMinY <= yPad * 1.35;
+      minY = opts.minY !== undefined ? opts.minY : (nearZero ? 0 : Math.max(0, candidateMin));
+      maxY = opts.maxY !== undefined ? opts.maxY : (rawMaxY + yPad);
+    }
   }
 
   if (opts.allowNegative && minY > 0) minY = 0;
@@ -69,7 +89,7 @@ function buildChartSvg(points, opts = {}) {
     if (maxY === 0) maxY = 1;
     else {
       const padAmt = Math.max(Math.abs(maxY) * 0.05, 1);
-      minY = opts.smartScale ? Math.max(0, minY - padAmt) : Math.min(0, minY);
+      minY = opts.smartScale ? Math.max(opts.allowNegative ? minY - padAmt : 0, minY - padAmt) : Math.min(0, minY);
       maxY += padAmt;
     }
   }
@@ -86,6 +106,28 @@ function buildChartSvg(points, opts = {}) {
       <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
   }).join('');
 
+  const tooltipMarkup = (x, y, lines, anchor = 'middle') => {
+    const safeLines = lines.map((line) => escapeHtml(String(line)));
+    const textWidth = Math.max(...safeLines.map((line) => line.length), 8) * 7.1;
+    const boxW = Math.max(112, Math.min(210, textWidth + 24));
+    const boxH = 48;
+    const clampedX = Math.max(pad.left + boxW / 2, Math.min(width - pad.right - boxW / 2, x));
+    const boxX = clampedX - boxW / 2;
+    const desiredY = y - 62;
+    const boxY = desiredY < pad.top + 4 ? y + 16 : desiredY;
+    const pointerUp = desiredY >= pad.top + 4;
+    const pointerX = Math.max(boxX + 16, Math.min(boxX + boxW - 16, x));
+    const textAnchor = anchor === 'start' ? 'start' : anchor === 'end' ? 'end' : 'middle';
+    const textX = textAnchor === 'middle' ? clampedX : textAnchor === 'start' ? boxX + 14 : boxX + boxW - 14;
+    return `
+      <g class="chart-tooltip">
+        <rect x="${boxX.toFixed(1)}" y="${boxY.toFixed(1)}" width="${boxW.toFixed(1)}" height="${boxH}" rx="12" ry="12" class="chart-tooltip-box" />
+        <path d="M ${pointerX - 7} ${pointerUp ? boxY + boxH - 1 : boxY + 1} L ${pointerX} ${pointerUp ? boxY + boxH + 8 : boxY - 8} L ${pointerX + 7} ${pointerUp ? boxY + boxH - 1 : boxY + 1} Z" class="chart-tooltip-pointer" />
+        <text x="${textX.toFixed(1)}" y="${(boxY + 18).toFixed(1)}" text-anchor="${textAnchor}" class="chart-tooltip-date">${safeLines[0]}</text>
+        <text x="${textX.toFixed(1)}" y="${(boxY + 36).toFixed(1)}" text-anchor="${textAnchor}" class="chart-tooltip-value">${safeLines[1] || ''}</text>
+      </g>`;
+  };
+
   if (opts.type === 'bar') {
     const step = plotW / Math.max(points.length, 1);
     const barW = Math.min(72, Math.max(24, step * 0.52));
@@ -95,9 +137,14 @@ function buildChartSvg(points, opts = {}) {
       const y = yScale(p.y);
       const x = centerX - barW / 2;
       const h = Math.max(1, Math.abs(baseY - y));
+      const tooltipLines = opts.barTooltip ? opts.barTooltip(p) : [p.label, fmtMoney(Math.round(p.y * 100))];
       return `
-        <rect x="${x.toFixed(1)}" y="${Math.min(y, baseY).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" class="chart-bar ${p.y < 0 ? 'negative' : 'positive'}" />
-        <text x="${centerX.toFixed(1)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`;
+        <g class="chart-bar-group">
+          <rect x="${x.toFixed(1)}" y="${Math.min(y, baseY).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" class="chart-bar ${p.y < 0 ? 'negative' : 'positive'}" />
+          <rect x="${(x - 6).toFixed(1)}" y="${Math.min(y, baseY).toFixed(1)}" width="${(barW + 12).toFixed(1)}" height="${h.toFixed(1)}" class="chart-hit-bar" />
+          ${tooltipMarkup(centerX, Math.min(y, baseY), tooltipLines)}
+          <text x="${centerX.toFixed(1)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>
+        </g>`;
     }).join('');
 
     return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
@@ -118,18 +165,22 @@ function buildChartSvg(points, opts = {}) {
       { ...single, x: single.x + 1 }
     ];
   }
-  const xScale = (x) => pad.left + ((x - Math.min(...linePoints.map((p) => p.x))) / (Math.max(...linePoints.map((p) => p.x)) - Math.min(...linePoints.map((p) => p.x)))) * plotW;
+  const lineMinX = Math.min(...linePoints.map((p) => p.x));
+  const lineMaxX = Math.max(...linePoints.map((p) => p.x));
+  const xScale = (x) => pad.left + ((x - lineMinX) / (lineMaxX - lineMinX)) * plotW;
   const line = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(' ');
   const area = `${line} L ${xScale(linePoints[linePoints.length - 1].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} L ${xScale(linePoints[0].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} Z`;
   const xLabels = [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]].filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
     .map((p) => `<text x="${xScale(p.x)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`).join('');
 
-  const tooltipText = (p) => escapeHtml(opts.pointTooltip ? opts.pointTooltip(p) : `${p.label}: ${fmtMoney(Math.round(p.y * 100))}`);
   return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
     ${yTickMarkup}
     ${zeroY !== null ? `<line x1="${pad.left}" y1="${zeroY}" x2="${width - pad.right}" y2="${zeroY}" class="chart-zero" />` : ''}
     <path d="${area}" class="chart-area" /><path d="${line}" class="chart-line" />
-    ${linePoints.map((p) => `<g class="chart-point"><circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="3.5" class="chart-dot" /><circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="11" class="chart-hit" /><title>${tooltipText(p)}</title></g>`).join('')}
+    ${linePoints.map((p) => {
+      const tooltipLines = opts.pointTooltip ? opts.pointTooltip(p) : [p.label, fmtMoney(Math.round(p.y * 100))];
+      return `<g class="chart-point"><circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="3.5" class="chart-dot" /><circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="11" class="chart-hit" />${tooltipMarkup(xScale(p.x), yScale(p.y), tooltipLines)}</g>`;
+    }).join('')}
     ${xLabels}
   </svg>`;
 }
@@ -260,7 +311,7 @@ function renderBalanceSection(container, bundle) {
       rows.map((r) => ({ x: r.ts, y: r.balance_cents / 100, label: r.as_of_date })),
       {
         smartScale: true,
-        pointTooltip: (p) => `${p.label} · ${fmtMoney(Math.round(p.y * 100))}`
+        pointTooltip: (p) => [p.label, fmtMoney(Math.round(p.y * 100))]
       }
     );
   }
@@ -282,7 +333,7 @@ function renderNetDepositsSection(container, bundle) {
   card.innerHTML = `
     <h2>Net Deposits by Year</h2>
     <div class="subtle">Negative values are displayed below zero.</div>
-    <div class="chart-wrap">${buildChartSvg(rows.map((r, i) => ({ x: i + 1, y: (Number(r.net_deposits_cents) || 0) / 100, label: String(r.year) })), { type: 'bar', allowNegative: true, minY: Math.min(0, ...rows.map((r) => (Number(r.net_deposits_cents) || 0) / 100)) })}</div>`;
+    <div class="chart-wrap">${buildChartSvg(rows.map((r, i) => ({ x: i + 1, y: (Number(r.net_deposits_cents) || 0) / 100, label: String(r.year) })), { type: 'bar', allowNegative: true, smartScale: true, barTooltip: (p) => [p.label, fmtMoney(Math.round(p.y * 100))] })}</div>`;
   container.appendChild(card);
 }
 
