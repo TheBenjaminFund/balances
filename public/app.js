@@ -1,5 +1,5 @@
 const app = document.getElementById('app');
-const state = { token: null, user: null, adminSelectedUserId: null, adminSelectedBalanceYear: null };
+const state = { token: null, user: null, adminSelectedUserId: null, adminSelectedBalanceYear: null, adminSort: 'label_asc' };
 
 const fmtMoney = (cents) => {
   if (cents === null || cents === undefined || Number.isNaN(Number(cents))) return '—';
@@ -15,6 +15,86 @@ const toUsdInputCents = (v) => {
 const centsToInput = (cents) => cents === null || cents === undefined ? '' : (Number(cents) / 100).toFixed(2);
 const todayYear = () => new Date().getFullYear();
 const uniqueYears = (rows, key) => [...new Set((rows || []).map((r) => Number(String(r[key]).slice(0, 4) || r[key])).filter(Boolean))].sort((a, b) => a - b);
+
+const parseISODate = (value) => {
+  if (!value) return null;
+  const d = new Date(`${value}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+const formatDatePretty = (value) => {
+  const d = parseISODate(value);
+  return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : value || '—';
+};
+const addDaysIso = (value, days) => {
+  const d = parseISODate(value);
+  if (!d) return '';
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+const getInvestorLabel = (user) => (user?.display_label || user?.email || 'Investor').trim();
+const sortAdminUsers = (users, sortKey) => {
+  const items = [...(users || [])];
+  const labelCmp = (a, b) => getInvestorLabel(a).localeCompare(getInvestorLabel(b), undefined, { sensitivity: 'base' });
+  const num = (value) => Number(value || 0);
+  items.sort((a, b) => {
+    if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+    switch (sortKey) {
+      case 'nav_desc': return num(b.balance_cents) - num(a.balance_cents) || labelCmp(a, b);
+      case 'invested_desc': return num(b.deposit_cents) - num(a.deposit_cents) || labelCmp(a, b);
+      case 'return_desc': {
+        const ar = num(a.deposit_cents) > 0 ? (num(a.balance_cents) - num(a.deposit_cents)) / num(a.deposit_cents) : -Infinity;
+        const br = num(b.deposit_cents) > 0 ? (num(b.balance_cents) - num(b.deposit_cents)) / num(b.deposit_cents) : -Infinity;
+        return br - ar || labelCmp(a, b);
+      }
+      case 'label_desc': return labelCmp(b, a);
+      case 'label_asc':
+      default: return labelCmp(a, b);
+    }
+  });
+  return items;
+};
+function summarizeTransactionsByDate(transactions) {
+  const map = new Map();
+  (transactions || []).forEach((tx) => {
+    if (!tx?.tx_date) return;
+    const existing = map.get(tx.tx_date) || {
+      count: 0,
+      deposit_cents: 0,
+      redemption_cents: 0,
+      items: []
+    };
+    existing.count += 1;
+    if (tx.tx_type === 'redemption') existing.redemption_cents += Number(tx.amount_cents || 0);
+    else existing.deposit_cents += Number(tx.amount_cents || 0);
+    existing.items.push(tx);
+    map.set(tx.tx_date, existing);
+  });
+  return map;
+}
+function buildTransactionMarker(date, txSummary) {
+  if (!txSummary) return null;
+  const hasDeposit = txSummary.deposit_cents > 0;
+  const hasRedemption = txSummary.redemption_cents > 0;
+  const lines = [formatDatePretty(date)];
+  if (hasDeposit && hasRedemption) {
+    lines.push(`Balance ${fmtMoney(0)}`);
+    lines.push(`Deposit ${fmtMoney(txSummary.deposit_cents)}`);
+    lines.push(`Redemption ${fmtMoney(txSummary.redemption_cents)}`);
+  } else if (hasDeposit) {
+    lines.push(`Balance ${fmtMoney(0)}`);
+    lines.push(`Deposit ${fmtMoney(txSummary.deposit_cents)}`);
+  } else if (hasRedemption) {
+    lines.push(`Balance ${fmtMoney(0)}`);
+    lines.push(`Redemption ${fmtMoney(txSummary.redemption_cents)}`);
+  }
+  txSummary.items.slice(0, 2).forEach((item) => {
+    if (item.notes) lines.push(item.notes);
+  });
+  return {
+    kind: hasDeposit && hasRedemption ? 'mixed' : hasRedemption ? 'redemption' : 'deposit',
+    lines
+  };
+}
 
 function toast(msg, ok = true) {
   const el = document.createElement('div');
@@ -41,6 +121,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
+
 function buildChartSvg(points, opts = {}) {
   if (!points || !points.length) return '<div class="empty-state">No data entered yet.</div>';
   const width = opts.width || 860;
@@ -66,8 +147,8 @@ function buildChartSvg(points, opts = {}) {
           minY = rawMinY - basePad;
           maxY = 0;
         } else {
-          minY = rawMinY - Math.max(basePad * 0.7, 1);
-          maxY = rawMaxY + Math.max(basePad * 0.7, 1);
+          minY = rawMinY - Math.max(basePad * 0.75, 1);
+          maxY = rawMaxY + Math.max(basePad * 0.9, 1.25);
         }
       } else {
         minY = Math.max(0, rawMinY - basePad * 0.35);
@@ -106,25 +187,28 @@ function buildChartSvg(points, opts = {}) {
       <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
   }).join('');
 
-  const tooltipMarkup = (x, y, lines, anchor = 'middle') => {
-    const safeLines = lines.map((line) => escapeHtml(String(line)));
-    const textWidth = Math.max(...safeLines.map((line) => line.length), 8) * 7.1;
-    const boxW = Math.max(112, Math.min(210, textWidth + 24));
-    const boxH = 48;
+  const tooltipMarkup = (x, y, lines = []) => {
+    const safeLines = lines.map((line) => escapeHtml(String(line))).filter(Boolean);
+    if (!safeLines.length) return '';
+    const maxChars = Math.max(...safeLines.map((line) => line.length), 10);
+    const boxW = Math.max(126, Math.min(254, maxChars * 7.1 + 28));
+    const boxH = 18 + (safeLines.length * 18);
     const clampedX = Math.max(pad.left + boxW / 2, Math.min(width - pad.right - boxW / 2, x));
     const boxX = clampedX - boxW / 2;
-    const desiredY = y - 62;
-    const boxY = desiredY < pad.top + 4 ? y + 16 : desiredY;
+    const desiredY = y - (boxH + 18);
+    const boxY = desiredY < pad.top + 4 ? y + 18 : desiredY;
     const pointerUp = desiredY >= pad.top + 4;
     const pointerX = Math.max(boxX + 16, Math.min(boxX + boxW - 16, x));
-    const textAnchor = anchor === 'start' ? 'start' : anchor === 'end' ? 'end' : 'middle';
-    const textX = textAnchor === 'middle' ? clampedX : textAnchor === 'start' ? boxX + 14 : boxX + boxW - 14;
+    const lineMarkup = safeLines.map((line, idx) => {
+      const cls = idx === 0 ? 'chart-tooltip-date' : idx === 1 ? 'chart-tooltip-value' : 'chart-tooltip-detail';
+      const yy = boxY + 18 + (idx * 18);
+      return `<text x="${clampedX.toFixed(1)}" y="${yy.toFixed(1)}" text-anchor="middle" class="${cls}">${line}</text>`;
+    }).join('');
     return `
       <g class="chart-tooltip">
         <rect x="${boxX.toFixed(1)}" y="${boxY.toFixed(1)}" width="${boxW.toFixed(1)}" height="${boxH}" rx="12" ry="12" class="chart-tooltip-box" />
         <path d="M ${pointerX - 7} ${pointerUp ? boxY + boxH - 1 : boxY + 1} L ${pointerX} ${pointerUp ? boxY + boxH + 8 : boxY - 8} L ${pointerX + 7} ${pointerUp ? boxY + boxH - 1 : boxY + 1} Z" class="chart-tooltip-pointer" />
-        <text x="${textX.toFixed(1)}" y="${(boxY + 18).toFixed(1)}" text-anchor="${textAnchor}" class="chart-tooltip-date">${safeLines[0]}</text>
-        <text x="${textX.toFixed(1)}" y="${(boxY + 36).toFixed(1)}" text-anchor="${textAnchor}" class="chart-tooltip-value">${safeLines[1] || ''}</text>
+        ${lineMarkup}
       </g>`;
   };
 
@@ -159,18 +243,15 @@ function buildChartSvg(points, opts = {}) {
   let linePoints = points;
   if (maxX === minX) {
     const single = points[0];
-    linePoints = [
-      { ...single, x: single.x - 1 },
-      single,
-      { ...single, x: single.x + 1 }
-    ];
+    linePoints = [{ ...single, x: single.x - 1 }, single, { ...single, x: single.x + 1 }];
   }
   const lineMinX = Math.min(...linePoints.map((p) => p.x));
   const lineMaxX = Math.max(...linePoints.map((p) => p.x));
   const xScale = (x) => pad.left + ((x - lineMinX) / (lineMaxX - lineMinX)) * plotW;
   const line = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(' ');
   const area = `${line} L ${xScale(linePoints[linePoints.length - 1].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} L ${xScale(linePoints[0].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} Z`;
-  const xLabels = [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]].filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
+  const xLabels = [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]]
+    .filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
     .map((p) => `<text x="${xScale(p.x)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`).join('');
 
   return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
@@ -179,7 +260,15 @@ function buildChartSvg(points, opts = {}) {
     <path d="${area}" class="chart-area" /><path d="${line}" class="chart-line" />
     ${linePoints.map((p) => {
       const tooltipLines = opts.pointTooltip ? opts.pointTooltip(p) : [p.label, fmtMoney(Math.round(p.y * 100))];
-      return `<g class="chart-point"><circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="3.5" class="chart-dot" /><circle cx="${xScale(p.x)}" cy="${yScale(p.y)}" r="11" class="chart-hit" />${tooltipMarkup(xScale(p.x), yScale(p.y), tooltipLines)}</g>`;
+      const marker = p.marker || null;
+      const markerCx = xScale(p.x);
+      const markerCy = yScale(p.y);
+      return `<g class="chart-point ${marker ? `has-marker marker-${marker.kind}` : ''}">
+        ${marker ? `<circle cx="${markerCx}" cy="${markerCy}" r="6.5" class="chart-event-ring" /><circle cx="${markerCx}" cy="${markerCy}" r="2.35" class="chart-event-core" />` : ''}
+        <circle cx="${markerCx}" cy="${markerCy}" r="3.5" class="chart-dot" />
+        <circle cx="${markerCx}" cy="${markerCy}" r="11" class="chart-hit" />
+        ${tooltipMarkup(markerCx, markerCy, tooltipLines)}
+      </g>`;
     }).join('')}
     ${xLabels}
   </svg>`;
@@ -307,11 +396,25 @@ function renderBalanceSection(container, bundle) {
       <div class="stat"><div class="label">Start</div><div class="value small-value">${fmtMoney(first.balance_cents)}</div><div class="subtle">${first.as_of_date}</div></div>
       <div class="stat"><div class="label">Latest</div><div class="value small-value">${fmtMoney(last.balance_cents)}</div><div class="subtle">${last.as_of_date}</div></div>
       <div class="stat"><div class="label">Change</div><div class="value small-value"><span class="${tone}">${fmtMoney(delta)}${pct === null ? '' : ` · ${fmtPct(pct)}`}</span></div></div>`;
+    const txMap = summarizeTransactionsByDate(bundle.transactions || []);
+    const plotted = rows.map((r) => {
+      const markerSummary = txMap.get(r.as_of_date);
+      const marker = buildTransactionMarker(r.as_of_date, markerSummary);
+      const lines = [formatDatePretty(r.as_of_date), fmtMoney(r.balance_cents)];
+      if (markerSummary) {
+        if (markerSummary.deposit_cents > 0) lines.push(`Deposit ${fmtMoney(markerSummary.deposit_cents)}`);
+        if (markerSummary.redemption_cents > 0) lines.push(`Redemption ${fmtMoney(markerSummary.redemption_cents)}`);
+        markerSummary.items.slice(0, 2).forEach((item) => {
+          if (item.notes) lines.push(item.notes);
+        });
+      }
+      return { x: r.ts, y: r.balance_cents / 100, label: r.as_of_date, marker, tooltipLines: lines };
+    });
     chartEl.innerHTML = buildChartSvg(
-      rows.map((r) => ({ x: r.ts, y: r.balance_cents / 100, label: r.as_of_date })),
+      plotted,
       {
         smartScale: true,
-        pointTooltip: (p) => [p.label, fmtMoney(Math.round(p.y * 100))]
+        pointTooltip: (p) => p.tooltipLines
       }
     );
   }
@@ -414,6 +517,7 @@ function renderAdmin(container) {
       <div class="card inner-card">
         <h3>Create User</h3>
         <div class="stack-sm">
+          <input id="newLabel" type="text" placeholder="Custom label (optional)" />
           <input id="newEmail" type="email" placeholder="Investor email" />
           <input id="newPass" type="text" placeholder="Optional password" />
           <button id="createUser">Add Investor</button>
@@ -422,7 +526,14 @@ function renderAdmin(container) {
       </div>
       <div class="card inner-card">
         <h3>Investors</h3>
-        <div class="investor-list" id="investorList"></div>
+        <select id="investorSort">
+          <option value="label_asc">Sort: A–Z</option>
+          <option value="label_desc">Sort: Z–A</option>
+          <option value="nav_desc">Sort: Current NAV</option>
+          <option value="invested_desc">Sort: Total Invested</option>
+          <option value="return_desc">Sort: Return %</option>
+        </select>
+        <div class="investor-list top-gap" id="investorList"></div>
       </div>
       <div class="card inner-card">
         <h3>Settings</h3>
@@ -432,11 +543,15 @@ function renderAdmin(container) {
         </div>
       </div>`;
 
+    const sortEl = sidebar.querySelector('#investorSort');
+    sortEl.value = state.adminSort;
+    sortEl.onchange = () => { state.adminSort = sortEl.value; refreshSidebar(state.adminSelectedUserId); };
     const list = sidebar.querySelector('#investorList');
-    users.forEach((u) => {
+    sortAdminUsers(users, state.adminSort).forEach((u) => {
       const btn = document.createElement('button');
       btn.className = `investor-item ${u.id === state.adminSelectedUserId ? 'active' : ''}`;
-      btn.innerHTML = `<span>${escapeHtml(u.email)}</span><span class="pill">${u.role}</span>`;
+      const label = getInvestorLabel(u);
+      btn.innerHTML = `<span class="investor-main"><strong>${escapeHtml(label)}</strong><span class="subtle investor-sub">${escapeHtml(u.email)}</span></span><span class="pill">${u.role}</span>`;
       btn.onclick = () => { state.adminSelectedUserId = u.id; refreshSidebar(u.id); loadDetail(u.id); };
       list.appendChild(btn);
     });
@@ -446,7 +561,7 @@ function renderAdmin(container) {
       const password = sidebar.querySelector('#newPass').value.trim();
       if (!email) return toast('Email required.', false);
       try {
-        const created = await api('/api/admin/users', { method: 'POST', body: JSON.stringify({ email, password: password || undefined }) });
+        const created = await api('/api/admin/users', { method: 'POST', body: JSON.stringify({ email, password: password || undefined, display_label: label || undefined }) });
         toast(`User created${created.temp_password ? ` — temp password: ${created.temp_password}` : ''}`);
         await refreshSidebar(created.id);
         loadDetail(created.id);
@@ -480,7 +595,8 @@ function renderAdmin(container) {
       header.innerHTML = `
         <div class="section-head">
           <div>
-            <h3>${escapeHtml(bundle.user.email)}</h3>
+            <h3>${escapeHtml(getInvestorLabel(bundle.user))}</h3>
+            <div class="subtle investor-sub">${escapeHtml(bundle.user.email)}</div>
             <div class="subtle">Manual account maintenance for this investor.</div>
           </div>
           <div class="row wrap-row">
@@ -531,6 +647,11 @@ function renderAdmin(container) {
       <h3>Overview</h3>
       <div class="grid two-col">
         <div>
+          <label>Display Label</label>
+          <input id="displayLabel" value="${escapeHtml(bundle.user.display_label || '')}" placeholder="Custom investor label" />
+        </div>
+        <div></div>
+        <div>
           <label>Total Invested (USD)</label>
           <input id="totalInvested" value="${escapeHtml(centsToInput(bundle.user.deposit_cents))}" />
         </div>
@@ -548,7 +669,8 @@ function renderAdmin(container) {
           method: 'PATCH',
           body: JSON.stringify({
             deposit_cents: toUsdInputCents(sec.querySelector('#totalInvested').value),
-            balance_cents: toUsdInputCents(sec.querySelector('#currentNav').value)
+            balance_cents: toUsdInputCents(sec.querySelector('#currentNav').value),
+            display_label: sec.querySelector('#displayLabel').value.trim()
           })
         });
         toast('Overview saved.');
@@ -609,18 +731,36 @@ function renderAdmin(container) {
       <div class="section-head">
         <div>
           <h3>Weekly Balances</h3>
-          <div class="subtle">Save one year at a time. Dates are fully manual.</div>
+          <div class="subtle">Save one year at a time. Dates stay manual, but new rows can smart-prefill from your existing pattern.</div>
         </div>
         <select id="balanceYearSelect">${years.map((y) => `<option value="${y}" ${String(y) === defaultYear ? 'selected' : ''}>${y}</option>`).join('')}</select>
       </div>
       <div class="table-wrap"><table class="table mono"><thead><tr><th>Date</th><th>Balance (USD)</th><th></th></tr></thead><tbody id="balanceBody"></tbody></table></div>
       <div class="subtle top-gap" id="balanceValidationHint">Each row must have a unique date inside the selected year.</div>
-      <div class="row wrap-row top-gap"><button id="addBalanceRow">Add Balance Row</button><button id="saveBalanceRows">Save Selected Year</button></div>`;
+      <div class="row wrap-row top-gap"><button id="addBalanceRow">Add Balance Row</button><button id="addTenBalanceRows" class="ghost-btn">Add 10 Rows</button><button id="saveBalanceRows">Save Selected Year</button></div>
+      <details class="bulk-box top-gap"><summary>Bulk Paste Weekly Balances</summary><div class="subtle top-gap">Paste two columns from a spreadsheet: date and balance. Tabs, commas, or multiple spaces all work.</div><textarea id="balanceBulkPaste" rows="7" placeholder="2025-01-10    10250
+2025-01-24    10410"></textarea><div class="row wrap-row top-gap"><button id="applyBalancePaste" class="ghost-btn">Append Parsed Rows</button></div></details>`;
     parent.appendChild(sec);
     const tbody = sec.querySelector('#balanceBody');
     const yearSelect = sec.querySelector('#balanceYearSelect');
     const addButton = sec.querySelector('#addBalanceRow');
+    const addTenButton = sec.querySelector('#addTenBalanceRows');
     const saveButton = sec.querySelector('#saveBalanceRows');
+
+    const inferNextDate = () => {
+      const dates = [...tbody.querySelectorAll('.date-input')].map((input) => input.value).filter(Boolean);
+      if (!dates.length) return '';
+      const last = dates[dates.length - 1];
+      if (dates.length >= 2) {
+        const prev = parseISODate(dates[dates.length - 2]);
+        const curr = parseISODate(last);
+        if (prev && curr) {
+          const diff = Math.round((curr.getTime() - prev.getTime()) / 86400000);
+          if (diff > 0 && diff <= 31) return addDaysIso(last, diff);
+        }
+      }
+      return addDaysIso(last, 7);
+    };
 
     const addRow = (date = '', value = '') => {
       const tr = makeTableRow([
@@ -641,9 +781,31 @@ function renderAdmin(container) {
       if (!rows.length) addRow('', '');
     };
 
-    addButton.onclick = () => addRow('', '');
+    addButton.onclick = () => addRow(inferNextDate(), '');
+    addTenButton.onclick = () => {
+      let nextDate = inferNextDate();
+      for (let i = 0; i < 10; i += 1) {
+        addRow(nextDate, '');
+        nextDate = nextDate ? addDaysIso(nextDate, 7) : '';
+      }
+    };
     drawYear();
     yearSelect.onchange = drawYear;
+    sec.querySelector('#applyBalancePaste').onclick = () => {
+      const raw = sec.querySelector('#balanceBulkPaste').value.trim();
+      if (!raw) return toast('Paste some rows first.', false);
+      const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      let added = 0;
+      lines.forEach((line) => {
+        const parts = line.split(/\t|,|\s{2,}/).map((part) => part.trim()).filter(Boolean);
+        if (parts.length < 2) return;
+        const [date, value] = parts;
+        addRow(date, value.replace(/[$,]/g, ''));
+        added += 1;
+      });
+      toast(added ? `Added ${added} row${added === 1 ? '' : 's'} from paste.` : 'No valid rows were detected.', !!added);
+      if (added) sec.querySelector('#balanceBulkPaste').value = '';
+    };
     saveButton.onclick = async () => {
       const selectedYear = yearSelect.value;
       state.adminSelectedBalanceYear = selectedYear;

@@ -19,7 +19,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '4mb' }));
 app.use(cors({ origin: true, credentials: true }));
 app.use(helmet({ crossOriginResourcePolicy: false }));
 
@@ -84,7 +84,8 @@ async function initDb() {
     deposit_cents INTEGER NOT NULL DEFAULT 0,
     year_2024_deposits_cents INTEGER NOT NULL DEFAULT 0,
     year_2024_ending_balance_cents INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    display_label TEXT
   )`);
 
   await run(`CREATE TABLE IF NOT EXISTS settings (
@@ -129,6 +130,9 @@ async function initDb() {
   if (!names.includes('year_2024_ending_balance_cents')) {
     await run("ALTER TABLE users ADD COLUMN year_2024_ending_balance_cents INTEGER NOT NULL DEFAULT 0");
   }
+  if (!names.includes('display_label')) {
+    await run("ALTER TABLE users ADD COLUMN display_label TEXT");
+  }
 
   // Seed / ensure admin user.
   if (ADMIN_EMAIL) {
@@ -171,7 +175,7 @@ function adminOnly(req, res, next) {
 }
 
 async function loadInvestorBundle(userId) {
-  const user = await get('SELECT id,email,role,balance_cents,deposit_cents,created_at FROM users WHERE id = ?', [userId]);
+  const user = await get('SELECT id,email,role,balance_cents,deposit_cents,created_at,display_label FROM users WHERE id = ?', [userId]);
   if (!user) return null;
   const yearlyTotals = await all(
     'SELECT year, net_deposits_cents FROM investor_yearly_totals WHERE user_id = ? ORDER BY year ASC',
@@ -221,7 +225,7 @@ async function replaceTransactions(userId, rows) {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, display_label } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     const row = await get('SELECT * FROM users WHERE email = ?', [String(email).toLowerCase()]);
     if (!row) return res.status(401).json({ error: 'Invalid credentials' });
@@ -264,7 +268,7 @@ app.patch('/api/me/password', auth, async (req, res) => {
 app.get('/api/admin/users', auth, adminOnly, async (req, res) => {
   try {
     const rows = await all(
-      'SELECT id,email,role,balance_cents,deposit_cents,created_at FROM users ORDER BY role DESC, email ASC'
+      "SELECT id,email,role,balance_cents,deposit_cents,created_at,display_label FROM users ORDER BY role DESC, COALESCE(NULLIF(display_label,''), email) COLLATE NOCASE ASC"
     );
     res.json(rows);
   } catch {
@@ -286,12 +290,13 @@ app.get('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
 
 app.post('/api/admin/users', auth, adminOnly, async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, display_label } = req.body || {};
     if (!email) return res.status(400).json({ error: 'email required' });
     const pwd = password || Math.floor(100000 + Math.random() * 900000).toString();
     const hash = bcrypt.hashSync(pwd, 10);
-    const result = await run('INSERT INTO users(email, password_hash, role) VALUES(?,?,?)', [String(email).toLowerCase(), hash, 'user']);
-    res.json({ id: result.lastID, email: String(email).toLowerCase(), temp_password: password ? null : pwd });
+    const label = typeof display_label === 'string' ? display_label.trim().slice(0, 80) : null;
+    const result = await run('INSERT INTO users(email, password_hash, role, display_label) VALUES(?,?,?,?)', [String(email).toLowerCase(), hash, 'user', label || null]);
+    res.json({ id: result.lastID, email: String(email).toLowerCase(), display_label: label || null, temp_password: password ? null : pwd });
   } catch {
     res.status(500).json({ error: 'DB error' });
   }
@@ -301,14 +306,16 @@ app.patch('/api/admin/users/:id/summary', auth, adminOnly, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Bad id' });
-    const { balance_cents, deposit_cents } = req.body || {};
+    const { balance_cents, deposit_cents, display_label } = req.body || {};
     const bal = cleanMoneyCents(balance_cents);
     const dep = cleanMoneyCents(deposit_cents);
-    if (bal === null && dep === null) return res.status(400).json({ error: 'Nothing to update' });
+    const label = typeof display_label === 'string' ? display_label.trim().slice(0, 80) : null;
+    if (bal === null && dep === null && display_label === undefined) return res.status(400).json({ error: 'Nothing to update' });
     const fields = [];
     const params = [];
     if (bal !== null) { fields.push('balance_cents = ?'); params.push(Math.max(0, bal)); }
     if (dep !== null) { fields.push('deposit_cents = ?'); params.push(dep); }
+    if (display_label !== undefined) { fields.push('display_label = ?'); params.push(label || null); }
     params.push(id);
     await run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, params);
     res.json({ updated: true });
