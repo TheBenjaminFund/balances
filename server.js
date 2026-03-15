@@ -74,6 +74,30 @@ function sanitizeYear(v) {
   return y;
 }
 
+function deriveYearlyTotalsFromTransactions(transactions = []) {
+  const map = new Map();
+  for (const tx of transactions) {
+    const year = sanitizeYear(String(tx?.tx_date || '').slice(0, 4));
+    if (!year) continue;
+    const amt = Math.abs(Number(tx?.amount_cents || 0));
+    const signed = tx?.tx_type === 'redemption' ? -amt : amt;
+    map.set(year, (map.get(year) || 0) + signed);
+  }
+  return [...map.entries()]
+    .map(([year, net_deposits_cents]) => ({ year, net_deposits_cents }))
+    .sort((a, b) => a.year - b.year);
+}
+
+function deriveLatestBalanceCents(balanceHistory = [], fallback = 0) {
+  if (balanceHistory.length) return Math.max(0, Number(balanceHistory[balanceHistory.length - 1]?.balance_cents || 0));
+  return Math.max(0, Number(fallback || 0));
+}
+
+function sumNetDeposits(yearlyTotals = [], fallback = 0) {
+  if (yearlyTotals.length) return yearlyTotals.reduce((sum, row) => sum + Number(row?.net_deposits_cents || 0), 0);
+  return Number(fallback || 0);
+}
+
 async function initDb() {
   await run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,7 +201,7 @@ function adminOnly(req, res, next) {
 async function loadInvestorBundle(userId) {
   const user = await get('SELECT id,email,role,balance_cents,deposit_cents,created_at,display_label FROM users WHERE id = ?', [userId]);
   if (!user) return null;
-  const yearlyTotals = await all(
+  const storedYearlyTotals = await all(
     'SELECT year, net_deposits_cents FROM investor_yearly_totals WHERE user_id = ? ORDER BY year ASC',
     [userId]
   );
@@ -190,6 +214,14 @@ async function loadInvestorBundle(userId) {
      FROM investor_transactions WHERE user_id = ? ORDER BY tx_date DESC, id DESC`,
     [userId]
   );
+  const derivedYearlyTotals = deriveYearlyTotalsFromTransactions(transactions);
+  const yearlyTotals = derivedYearlyTotals.length ? derivedYearlyTotals : storedYearlyTotals;
+  user.manual_balance_cents = Number(user.balance_cents || 0);
+  user.manual_deposit_cents = Number(user.deposit_cents || 0);
+  user.balance_cents = deriveLatestBalanceCents(balanceHistory, user.manual_balance_cents);
+  user.deposit_cents = sumNetDeposits(yearlyTotals, user.manual_deposit_cents);
+  user.uses_derived_totals = derivedYearlyTotals.length > 0;
+  user.uses_derived_balance = balanceHistory.length > 0;
   return { user, yearlyTotals, balanceHistory, transactions };
 }
 
@@ -267,9 +299,32 @@ app.patch('/api/me/password', auth, async (req, res) => {
 
 app.get('/api/admin/users', auth, adminOnly, async (req, res) => {
   try {
-    const rows = await all(
-      "SELECT id,email,role,balance_cents,deposit_cents,created_at,display_label FROM users ORDER BY role DESC, COALESCE(NULLIF(display_label,''), email) COLLATE NOCASE ASC"
-    );
+    const rows = await all(`
+      SELECT
+        u.id,
+        u.email,
+        u.role,
+        u.created_at,
+        u.display_label,
+        COALESCE((
+          SELECT bh.balance_cents
+          FROM investor_balance_history bh
+          WHERE bh.user_id = u.id
+          ORDER BY bh.as_of_date DESC, bh.id DESC
+          LIMIT 1
+        ), u.balance_cents, 0) AS balance_cents,
+        COALESCE((
+          SELECT SUM(CASE WHEN tx.tx_type = 'redemption' THEN -ABS(tx.amount_cents) ELSE ABS(tx.amount_cents) END)
+          FROM investor_transactions tx
+          WHERE tx.user_id = u.id
+        ), (
+          SELECT SUM(iyt.net_deposits_cents)
+          FROM investor_yearly_totals iyt
+          WHERE iyt.user_id = u.id
+        ), u.deposit_cents, 0) AS deposit_cents
+      FROM users u
+      ORDER BY role DESC, COALESCE(NULLIF(display_label,''), email) COLLATE NOCASE ASC
+    `);
     res.json(rows);
   } catch {
     res.status(500).json({ error: 'DB error' });
@@ -306,18 +361,10 @@ app.patch('/api/admin/users/:id/summary', auth, adminOnly, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Bad id' });
-    const { balance_cents, deposit_cents, display_label } = req.body || {};
-    const bal = cleanMoneyCents(balance_cents);
-    const dep = cleanMoneyCents(deposit_cents);
+    const { display_label } = req.body || {};
     const label = typeof display_label === 'string' ? display_label.trim().slice(0, 80) : null;
-    if (bal === null && dep === null && display_label === undefined) return res.status(400).json({ error: 'Nothing to update' });
-    const fields = [];
-    const params = [];
-    if (bal !== null) { fields.push('balance_cents = ?'); params.push(Math.max(0, bal)); }
-    if (dep !== null) { fields.push('deposit_cents = ?'); params.push(dep); }
-    if (display_label !== undefined) { fields.push('display_label = ?'); params.push(label || null); }
-    params.push(id);
-    await run(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, params);
+    if (display_label === undefined) return res.status(400).json({ error: 'Nothing to update' });
+    await run('UPDATE users SET display_label = ? WHERE id = ?', [label || null, id]);
     res.json({ updated: true });
   } catch {
     res.status(500).json({ error: 'DB error' });

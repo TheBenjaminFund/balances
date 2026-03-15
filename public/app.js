@@ -651,29 +651,24 @@ function renderAdmin(container) {
           <input id="displayLabel" value="${escapeHtml(bundle.user.display_label || '')}" placeholder="Custom investor label" />
         </div>
         <div></div>
-        <div>
-          <label>Total Invested (USD)</label>
-          <input id="totalInvested" value="${escapeHtml(centsToInput(bundle.user.deposit_cents))}" />
-        </div>
-        <div>
-          <label>Current NAV (USD)</label>
-          <input id="currentNav" value="${escapeHtml(centsToInput(bundle.user.balance_cents))}" />
-        </div>
       </div>
-      <div class="subtle">These top-line values are entered manually and displayed in the investor dashboard summary.</div>
-      <div class="top-gap"><button id="saveOverview">Save Overview</button></div>`;
+      <div class="stats three compact-stats top-gap">
+        <div class="stat"><div class="label">Total Invested</div><div class="value small-value">${fmtMoney(bundle.user.deposit_cents)}</div><div class="subtle">Auto-calculated from transactions by year</div></div>
+        <div class="stat"><div class="label">Current NAV</div><div class="value small-value">${fmtMoney(bundle.user.balance_cents)}</div><div class="subtle">Latest saved balance entry</div></div>
+        <div class="stat"><div class="label">Calculation Mode</div><div class="value small-value">Automatic</div><div class="subtle">Transactions + balance history drive dashboard totals</div></div>
+      </div>
+      <div class="subtle top-gap">Only the display label is edited here. Total Invested and Current NAV now update automatically from the investor ledger and balance history.</div>
+      <div class="top-gap"><button id="saveOverview">Save Label</button></div>`;
     parent.appendChild(sec);
     sec.querySelector('#saveOverview').onclick = async () => {
       try {
         await api(`/api/admin/users/${bundle.user.id}/summary`, {
           method: 'PATCH',
           body: JSON.stringify({
-            deposit_cents: toUsdInputCents(sec.querySelector('#totalInvested').value),
-            balance_cents: toUsdInputCents(sec.querySelector('#currentNav').value),
             display_label: sec.querySelector('#displayLabel').value.trim()
           })
         });
-        toast('Overview saved.');
+        toast('Label saved.');
         sidebarRefresh(bundle.user.id);
       } catch (e) {
         toast(e.message || 'Save failed.', false);
@@ -687,37 +682,21 @@ function renderAdmin(container) {
     const rows = (bundle.yearlyTotals || []).slice().sort((a, b) => a.year - b.year);
     sec.innerHTML = `
       <h3>Net Deposits by Year</h3>
-      <div class="subtle">Enter one row per year. Negative values are allowed.</div>
-      <div class="table-wrap"><table class="table mono"><thead><tr><th>Year</th><th>Net Deposits (USD)</th><th></th></tr></thead><tbody id="yearlyBody"></tbody></table></div>
-      <div class="row wrap-row top-gap"><button id="addYearlyRow">Add Year</button><button id="saveYearlyRows">Save Net Deposits</button></div>`;
+      <div class="subtle">These values are now auto-calculated from the investor transaction ledger. Deposits add to the yearly total and redemptions subtract from it.</div>
+      <div class="table-wrap"><table class="table mono"><thead><tr><th>Year</th><th>Net Deposits (USD)</th></tr></thead><tbody id="yearlyBody"></tbody></table></div>`;
     parent.appendChild(sec);
     const tbody = sec.querySelector('#yearlyBody');
 
-    const addRow = (year = '', value = '') => {
-      const tr = makeTableRow([
-        `<td><input class="year-input" value="${escapeHtml(year)}" placeholder="2026" /></td>`,
-        `<td><input class="money-input" value="${escapeHtml(value)}" placeholder="0.00" /></td>`,
-        `<td><button class="ghost-btn delete-row">Remove</button></td>`
-      ]);
-      tr.querySelector('.delete-row').onclick = () => tr.remove();
-      tbody.appendChild(tr);
-    };
-    rows.forEach((r) => addRow(String(r.year), centsToInput(r.net_deposits_cents)));
-    if (!rows.length) addRow(String(todayYear()), '');
-    sec.querySelector('#addYearlyRow').onclick = () => addRow(String(todayYear()), '');
-    sec.querySelector('#saveYearlyRows').onclick = async () => {
-      const payload = [...tbody.querySelectorAll('tr')].map((tr) => ({
-        year: tr.querySelector('.year-input').value.trim(),
-        net_deposits_cents: toUsdInputCents(tr.querySelector('.money-input').value)
-      }));
-      try {
-        await api(`/api/admin/users/${bundle.user.id}/yearly-totals`, { method: 'PUT', body: JSON.stringify({ rows: payload }) });
-        toast('Net deposits saved.');
-        loadDetail(bundle.user.id);
-      } catch (e) {
-        toast(e.message || 'Save failed.', false);
-      }
-    };
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="2" class="subtle">No transactions entered yet.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map((r) => `
+      <tr>
+        <td>${escapeHtml(String(r.year))}</td>
+        <td>${escapeHtml(fmtMoney(r.net_deposits_cents))}</td>
+      </tr>`).join('');
   }
 
   function renderAdminBalancesSection(parent, bundle) {
