@@ -387,7 +387,7 @@ function renderLogin() {
     <div class="public-left">
       <div class="card hero-card">
         <div class="eyebrow">The Benjamin Fund</div>
-        <h1>Private Investor Portal</h1>
+        <h1>Investor Experience</h1>
         <div class="subtle hero-copy">A secure dashboard for investor balances, transactions, and account reporting.</div>
         <div class="stats three compact-stats hero-stats" id="publicHeroStats">
           <div class="stat"><div class="label">Current NAV / Share</div><div class="value">—</div></div>
@@ -999,6 +999,8 @@ function renderAdmin(container) {
             <div class="subtle">NAV / Share History</div>
             <div class="table-wrap top-gap"><table class="table mono"><thead><tr><th>Date</th><th>NAV / Share (USD)</th><th></th></tr></thead><tbody id="navHistoryBody"></tbody></table></div>
             <div class="row wrap-row top-gap"><button id="addNavRow">Add Row</button><button id="saveNavRows">Save NAV History</button></div>
+            <details class="bulk-box top-gap"><summary>Bulk Paste NAV / Share History</summary><div class="subtle top-gap">Paste two columns from a spreadsheet: date and NAV/share. Tabs, commas, or multiple spaces all work.</div><textarea id="navBulkPaste" rows="7" placeholder="2025-01-10    12.50
+2025-01-24    12.61"></textarea><div class="row wrap-row top-gap"><button id="applyNavPaste" class="ghost-btn">Append Parsed Rows</button></div></details>
           </div>
           <div>
             <div class="subtle">Major Fund Events</div>
@@ -1033,6 +1035,34 @@ function renderAdmin(container) {
       if (!eventRows.length) addEventRow({});
       mount.querySelector('#addNavRow').onclick = () => addNavRow({});
       mount.querySelector('#addNavEventRow').onclick = () => addEventRow({});
+                  mount.querySelector('#applyNavPaste').onclick = () => {
+        const raw = mount.querySelector('#navBulkPaste').value || '';
+        const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (!lines.length) return toast('Paste at least one NAV row first.', false);
+        let appended = 0;
+        const bad = [];
+        lines.forEach((line, idx) => {
+          const clean = line.replace(/\$+/g, '').trim();
+          const m = clean.match(/^(\d{4}-\d{2}-\d{2})[\t ]+(.+)$/);
+          if (!m) {
+            bad.push(idx + 1);
+            return;
+          }
+          const date = m[1];
+          const valueRaw = m[2].trim().replace(/,/g, '');
+          const cents = toUsdInputCents(valueRaw);
+          if (cents === null) {
+            bad.push(idx + 1);
+            return;
+          }
+          addNavRow({ as_of_date: date, nav_per_share_cents: cents });
+          appended += 1;
+        });
+        if (!appended) return toast('No NAV rows could be parsed from the pasted data.', false);
+        mount.querySelector('#navBulkPaste').value = '';
+        toast(`Appended ${appended} NAV row${appended === 1 ? '' : 's'}${bad.length ? ` (${bad.length} skipped)` : ''}.`, bad.length === 0);
+      };
+
       mount.querySelector('#saveNavRows').onclick = async () => {
         const payload = [...navBody.querySelectorAll('tr')].map((tr) => ({
           as_of_date: tr.querySelector('.date-input').value,

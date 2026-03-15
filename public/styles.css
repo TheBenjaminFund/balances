@@ -45,7 +45,7 @@ button.danger-btn{background:linear-gradient(135deg,#b60000,#ff4d4d)}
 .public-left,.public-right{min-width:0}
 .hero-card{padding:22px}
 .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
-.hero-copy{max-width:58ch}
+.hero-copy{max-width:58ch;padding-bottom:12px;line-height:1.5}
 .hero-stats .stat{min-height:96px}
 .public-login-card{margin:0;position:sticky;top:8px}
 .transaction-toolbar select{min-width:150px;width:auto}
