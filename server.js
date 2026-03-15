@@ -146,6 +146,19 @@ async function initDb() {
     FOREIGN KEY(user_id) REFERENCES users(id)
   )`);
 
+  await run(`CREATE TABLE IF NOT EXISTS fund_nav_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    as_of_date TEXT NOT NULL UNIQUE,
+    nav_per_share_cents INTEGER NOT NULL DEFAULT 0
+  )`);
+
+  await run(`CREATE TABLE IF NOT EXISTS fund_nav_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_date TEXT NOT NULL,
+    title TEXT NOT NULL,
+    notes TEXT
+  )`);
+
   const cols = await all('PRAGMA table_info(users)');
   const names = (cols || []).map(c => c.name);
   if (!names.includes('year_2024_deposits_cents')) {
@@ -251,6 +264,41 @@ async function replaceTransactions(userId, rows) {
     await run(
       'INSERT INTO investor_transactions(user_id, tx_date, tx_type, amount_cents, nav_per_share_cents, notes) VALUES(?,?,?,?,?,?)',
       [userId, row.tx_date, row.tx_type, row.amount_cents, row.nav_per_share_cents, row.notes || null]
+    );
+  }
+}
+
+async function loadFundNavBundle() {
+  const navHistory = await all(
+    'SELECT as_of_date, nav_per_share_cents FROM fund_nav_history ORDER BY as_of_date ASC'
+  );
+  const navEvents = await all(
+    'SELECT id, event_date, title, notes FROM fund_nav_events ORDER BY event_date ASC, id ASC'
+  );
+  const latest = navHistory[navHistory.length - 1] || null;
+  return {
+    navHistory,
+    navEvents,
+    current_nav_per_share_cents: latest ? Number(latest.nav_per_share_cents || 0) : null
+  };
+}
+
+async function replaceFundNavHistory(rows) {
+  await run('DELETE FROM fund_nav_history');
+  for (const row of rows) {
+    await run(
+      'INSERT INTO fund_nav_history(as_of_date, nav_per_share_cents) VALUES(?,?)',
+      [row.as_of_date, Math.max(0, row.nav_per_share_cents)]
+    );
+  }
+}
+
+async function replaceFundNavEvents(rows) {
+  await run('DELETE FROM fund_nav_events');
+  for (const row of rows) {
+    await run(
+      'INSERT INTO fund_nav_events(event_date, title, notes) VALUES(?,?,?)',
+      [row.event_date, row.title, row.notes || null]
     );
   }
 }
@@ -476,6 +524,71 @@ app.delete('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
   }
 });
 
+
+app.get('/api/admin/fund-nav', auth, adminOnly, async (req, res) => {
+  try {
+    res.json(await loadFundNavBundle());
+  } catch {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+app.put('/api/admin/fund-nav/history', auth, adminOnly, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows) return res.status(400).json({ error: 'Bad input' });
+    const clean = [];
+    const seen = new Set();
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const rowNum = i + 1;
+      const as_of_date = sanitizeDate(row?.as_of_date);
+      const nav_per_share_cents = cleanMoneyCents(row?.nav_per_share_cents);
+      if (!as_of_date || nav_per_share_cents === null) {
+        return res.status(400).json({ error: `Row ${rowNum} is missing a valid date or NAV/share` });
+      }
+      if (seen.has(as_of_date)) return res.status(400).json({ error: `Duplicate date found: ${as_of_date}` });
+      seen.add(as_of_date);
+      clean.push({ as_of_date, nav_per_share_cents });
+    }
+    clean.sort((a, b) => a.as_of_date.localeCompare(b.as_of_date));
+    await replaceFundNavHistory(clean);
+    res.json({ updated: true, count: clean.length });
+  } catch {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+app.put('/api/admin/fund-nav/events', auth, adminOnly, async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+    if (!rows) return res.status(400).json({ error: 'Bad input' });
+    const clean = [];
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const event_date = sanitizeDate(row?.event_date);
+      const title = typeof row?.title === 'string' ? row.title.trim().slice(0, 100) : '';
+      const notes = typeof row?.notes === 'string' ? row.notes.trim().slice(0, 240) : null;
+      if (!event_date || !title) continue;
+      clean.push({ event_date, title, notes });
+    }
+    clean.sort((a, b) => a.event_date.localeCompare(b.event_date));
+    await replaceFundNavEvents(clean);
+    res.json({ updated: true, count: clean.length });
+  } catch {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+app.get('/api/admin/backup', auth, adminOnly, async (req, res) => {
+  try {
+    const stamp = new Date().toISOString().replace(/[:T]/g, '-').slice(0, 16);
+    res.download(dbFile, `benjamin-fund-backup-${stamp}.sqlite`);
+  } catch {
+    res.status(500).json({ error: 'Backup failed' });
+  }
+});
+
 app.get('/api/admin/last-updated', auth, adminOnly, async (req, res) => {
   try {
     const row = await get("SELECT value FROM settings WHERE key = 'last_updated'");
@@ -503,6 +616,19 @@ app.get('/api/public-stats', async (req, res) => {
   try {
     const row = await get("SELECT value FROM settings WHERE key = 'last_updated'");
     res.json({ last_updated: row?.value || null });
+  } catch {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+app.get('/api/public-landing', async (req, res) => {
+  try {
+    const row = await get("SELECT value FROM settings WHERE key = 'last_updated'");
+    const nav = await loadFundNavBundle();
+    res.json({
+      last_updated: row?.value || null,
+      ...nav
+    });
   } catch {
     res.status(500).json({ error: 'DB error' });
   }

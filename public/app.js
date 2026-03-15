@@ -1,5 +1,5 @@
 const app = document.getElementById('app');
-const state = { token: null, user: null, adminSelectedUserId: null, adminSelectedBalanceYear: null, adminSort: 'label_asc' };
+const state = { token: null, user: null, adminSelectedUserId: null, adminSelectedBalanceYear: null, adminSort: 'label_asc', publicNavLoaded: false };
 
 const fmtMoney = (cents) => {
   if (cents === null || cents === undefined || Number.isNaN(Number(cents))) return '—';
@@ -274,25 +274,31 @@ function buildChartSvg(points, opts = {}) {
   </svg>`;
 }
 
-function computeBalanceViews(balanceHistory) {
-  const rows = (balanceHistory || [])
-    .filter((r) => r.as_of_date && r.balance_cents !== null && r.balance_cents !== undefined)
-    .map((r) => ({ ...r, ts: new Date(`${r.as_of_date}T00:00:00`).getTime(), balance_cents: Math.max(0, Number(r.balance_cents) || 0) }))
+function computeTimeViews(rows, dateKey, valueKey) {
+  const normalized = (rows || [])
+    .filter((r) => r?.[dateKey] && r?.[valueKey] !== null && r?.[valueKey] !== undefined)
+    .map((r) => ({ ...r, ts: new Date(`${r[dateKey]}T00:00:00`).getTime(), [valueKey]: Math.max(0, Number(r[valueKey]) || 0) }))
     .sort((a, b) => a.ts - b.ts);
-  const latest = rows[rows.length - 1];
-  const currentYear = latest ? Number(String(latest.as_of_date).slice(0, 4)) : todayYear();
-  const currentYearRows = rows.filter((r) => Number(String(r.as_of_date).slice(0, 4)) === currentYear);
+  const latest = normalized[normalized.length - 1];
+  const currentYear = latest ? Number(String(latest[dateKey]).slice(0, 4)) : todayYear();
+  const currentYearRows = normalized.filter((r) => Number(String(r[dateKey]).slice(0, 4)) === currentYear);
   const yearStartTs = currentYearRows[0]?.ts ?? null;
   const monthlyCutoff = latest ? latest.ts - (30 * 24 * 60 * 60 * 1000) : null;
   const yearlyCutoff = latest ? latest.ts - (52 * 7 * 24 * 60 * 60 * 1000) : null;
-
-  const views = {
-    yearly: rows.filter((r) => latest ? r.ts >= yearlyCutoff : true),
-    monthly: rows.filter((r) => latest ? r.ts >= monthlyCutoff : true),
-    ytd: rows.filter((r) => yearStartTs ? r.ts >= yearStartTs : false),
-    all: rows
+  return {
+    yearly: normalized.filter((r) => latest ? r.ts >= yearlyCutoff : true),
+    monthly: normalized.filter((r) => latest ? r.ts >= monthlyCutoff : true),
+    ytd: normalized.filter((r) => yearStartTs ? r.ts >= yearStartTs : false),
+    all: normalized
   };
-  return views;
+}
+
+function computeBalanceViews(balanceHistory) {
+  return computeTimeViews(balanceHistory, 'as_of_date', 'balance_cents');
+}
+
+function computeNavViews(navHistory) {
+  return computeTimeViews(navHistory, 'as_of_date', 'nav_per_share_cents');
 }
 
 function renderLastUpdatedSection(parent) {
@@ -305,24 +311,107 @@ function renderLastUpdatedSection(parent) {
   }).catch(() => {});
 }
 
+function renderPublicNavSection(container, landing) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="section-head">
+      <div>
+        <h2>NAV / Share History</h2>
+        <div class="subtle">Major fund events appear on the chart when available.</div>
+      </div>
+      <div class="toggle-group" id="publicNavToggles">
+        <button class="toggle active" data-view="yearly">1Y</button>
+        <button class="toggle" data-view="ytd">YTD</button>
+        <button class="toggle" data-view="all">All-Time</button>
+      </div>
+    </div>
+    <div class="stats four compact-stats balance-stats" id="publicNavStats"></div>
+    <div class="chart-wrap" id="publicNavChart"></div>`;
+  container.appendChild(card);
+  const chartEl = card.querySelector('#publicNavChart');
+  const statsEl = card.querySelector('#publicNavStats');
+  const labelMap = { yearly: 'Last 52 Weeks', ytd: 'YTD', all: 'All-Time' };
+  const views = computeNavViews(landing.navHistory || []);
+  const eventMap = new Map();
+  (landing.navEvents || []).forEach((ev) => {
+    if (!ev?.event_date) return;
+    const existing = eventMap.get(ev.event_date) || [];
+    existing.push(ev);
+    eventMap.set(ev.event_date, existing);
+  });
+
+  function draw(viewKey) {
+    const rows = views[viewKey] || [];
+    if (!rows.length) {
+      chartEl.innerHTML = '<div class="empty-state">NAV / share history will appear here once entries are added.</div>';
+      statsEl.innerHTML = '<div class="stat"><div class="label">Range</div><div class="value">—</div></div><div class="stat"><div class="label">Start</div><div class="value">—</div></div><div class="stat"><div class="label">Latest</div><div class="value">—</div></div><div class="stat"><div class="label">Change</div><div class="value">—</div></div>';
+      return;
+    }
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    const delta = last.nav_per_share_cents - first.nav_per_share_cents;
+    const pct = first.nav_per_share_cents > 0 ? (delta / first.nav_per_share_cents) * 100 : null;
+    const tone = pct === null ? 'neutral' : delta >= 0 ? 'pos' : 'neg';
+    statsEl.innerHTML = `
+      <div class="stat"><div class="label">Range</div><div class="value small-value">${labelMap[viewKey]}</div><div class="subtle">${rows.length} point${rows.length === 1 ? '' : 's'}</div></div>
+      <div class="stat"><div class="label">Start NAV</div><div class="value small-value">${fmtMoney(first.nav_per_share_cents)}</div><div class="subtle">${first.as_of_date}</div></div>
+      <div class="stat"><div class="label">Current NAV</div><div class="value small-value">${fmtMoney(last.nav_per_share_cents)}</div><div class="subtle">${last.as_of_date}</div></div>
+      <div class="stat change-stat"><div class="label">Change</div><div class="change-readout"><div class="change-amount ${tone}">${fmtMoney(delta)}</div><div class="change-percent ${tone}">${pct === null ? 'Percent change unavailable' : fmtPct(pct)}</div></div></div>`;
+    const plotted = rows.map((r) => {
+      const matching = eventMap.get(r.as_of_date) || [];
+      const marker = matching.length ? { kind: 'deposit', lines: [formatDatePretty(r.as_of_date), fmtMoney(r.nav_per_share_cents), ...matching.flatMap((ev) => [ev.title, ev.notes || '']).filter(Boolean).slice(0, 4)] } : null;
+      const tooltipLines = [formatDatePretty(r.as_of_date), fmtMoney(r.nav_per_share_cents), ...matching.flatMap((ev) => [ev.title, ev.notes || '']).filter(Boolean).slice(0, 4)];
+      return { x: r.ts, y: r.nav_per_share_cents / 100, label: r.as_of_date, marker, tooltipLines };
+    });
+    chartEl.innerHTML = buildChartSvg(plotted, { smartScale: true, pointTooltip: (p) => p.tooltipLines });
+  }
+
+  card.querySelectorAll('.toggle').forEach((btn) => {
+    btn.onclick = () => {
+      card.querySelectorAll('.toggle').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      draw(btn.dataset.view);
+    };
+  });
+  draw('yearly');
+}
+
 function renderLogin() {
   app.innerHTML = '';
   const acct = document.getElementById('siteHeaderAcct');
   if (acct) acct.innerHTML = '';
-  const card = document.createElement('div');
-  card.className = 'card login-card';
-  card.innerHTML = `
-    <h1>Investor Portal</h1>
-    <div class="subtle">Sign in to view account information.</div>
-    <div class="row wrap-row login-row">
-      <input id="email" type="email" placeholder="Email" />
-      <input id="password" type="password" placeholder="Password" />
-      <button id="login">Login</button>
+  const shell = document.createElement('div');
+  shell.className = 'public-shell';
+  shell.innerHTML = `
+    <div class="public-left">
+      <div class="card hero-card">
+        <div class="eyebrow">The Benjamin Fund</div>
+        <h1>Private Investor Portal</h1>
+        <div class="subtle hero-copy">A secure dashboard for investor balances, transactions, and account reporting.</div>
+        <div class="stats three compact-stats hero-stats" id="publicHeroStats">
+          <div class="stat"><div class="label">Current NAV / Share</div><div class="value">—</div></div>
+          <div class="stat"><div class="label">Last Updated</div><div class="value small-value">—</div></div>
+          <div class="stat"><div class="label">Portal Access</div><div class="value small-value">Secure Login</div></div>
+        </div>
+      </div>
+      <div id="publicNavMount"></div>
+    </div>
+    <div class="public-right">
+      <div class="card login-card public-login-card">
+        <h2>Investor Login</h2>
+        <div class="subtle">Sign in to view account information.</div>
+        <div class="stack-sm top-gap">
+          <input id="email" type="email" placeholder="Email" />
+          <input id="password" type="password" placeholder="Password" />
+          <button id="login">Login</button>
+        </div>
+      </div>
     </div>`;
-  app.appendChild(card);
-  card.querySelector('#login').onclick = async () => {
-    const email = card.querySelector('#email').value.trim();
-    const password = card.querySelector('#password').value.trim();
+  app.appendChild(shell);
+  shell.querySelector('#login').onclick = async () => {
+    const email = shell.querySelector('#email').value.trim();
+    const password = shell.querySelector('#password').value.trim();
     if (!email || !password) return toast('Enter email and password.', false);
     try {
       const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
@@ -333,6 +422,14 @@ function renderLogin() {
       toast(e.message || 'Login failed.', false);
     }
   };
+  api('/api/public-landing').then((landing) => {
+    const stats = shell.querySelector('#publicHeroStats');
+    stats.innerHTML = `
+      <div class="stat"><div class="label">Current NAV / Share</div><div class="value">${landing.current_nav_per_share_cents === null || landing.current_nav_per_share_cents === undefined ? '—' : fmtMoney(landing.current_nav_per_share_cents)}</div></div>
+      <div class="stat"><div class="label">Last Updated</div><div class="value small-value">${escapeHtml(landing.last_updated || '—')}</div></div>
+      <div class="stat"><div class="label">Portal Access</div><div class="value small-value">Secure Login</div></div>`;
+    renderPublicNavSection(shell.querySelector('#publicNavMount'), landing);
+  }).catch(() => {});
 }
 
 function renderSummaryCards(container, bundle) {
@@ -441,26 +538,70 @@ function renderNetDepositsSection(container, bundle) {
 }
 
 function renderTransactionsSection(container, bundle) {
-  const rows = bundle.transactions || [];
+  const allRows = (bundle.transactions || []).slice();
   const card = document.createElement('div');
   card.className = 'card';
-  const body = rows.length ? rows.map((tx) => `
-    <tr>
-      <td>${escapeHtml(tx.tx_date)}</td>
-      <td>${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
-      <td>${fmtMoney(tx.amount_cents)}</td>
-      <td>${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
-      <td>${escapeHtml(tx.notes || '')}</td>
-    </tr>`).join('') : '<tr><td colspan="5">No transactions entered yet.</td></tr>';
   card.innerHTML = `
-    <h2>Deposits and Withdrawals</h2>
+    <div class="section-head">
+      <div>
+        <h2>Deposits and Withdrawals</h2>
+        <div class="subtle">Filter by type or year, and sort by date or amount.</div>
+      </div>
+      <div class="toggle-group transaction-toolbar">
+        <select id="txFilterType">
+          <option value="all">All Types</option>
+          <option value="deposit">Deposits</option>
+          <option value="redemption">Redemptions</option>
+        </select>
+        <select id="txFilterYear"><option value="all">All Years</option></select>
+        <select id="txSort">
+          <option value="date_desc">Newest First</option>
+          <option value="date_asc">Oldest First</option>
+          <option value="amount_desc">Amount High to Low</option>
+          <option value="amount_asc">Amount Low to High</option>
+        </select>
+      </div>
+    </div>
     <div class="table-wrap">
       <table class="table mono">
         <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>NAV / Share</th><th>Notes</th></tr></thead>
-        <tbody>${body}</tbody>
+        <tbody id="txTableBody"></tbody>
       </table>
     </div>`;
   container.appendChild(card);
+  const yearSelect = card.querySelector('#txFilterYear');
+  uniqueYears(allRows, 'tx_date').reverse().forEach((year) => {
+    const opt = document.createElement('option');
+    opt.value = String(year);
+    opt.textContent = String(year);
+    yearSelect.appendChild(opt);
+  });
+  const tbody = card.querySelector('#txTableBody');
+
+  function draw() {
+    const filterType = card.querySelector('#txFilterType').value;
+    const filterYear = card.querySelector('#txFilterYear').value;
+    const sortKey = card.querySelector('#txSort').value;
+    let rows = allRows.filter((tx) => filterType === 'all' ? true : tx.tx_type === filterType);
+    rows = rows.filter((tx) => filterYear === 'all' ? true : String(tx.tx_date || '').startsWith(filterYear));
+    rows.sort((a, b) => {
+      if (sortKey === 'date_asc') return String(a.tx_date).localeCompare(String(b.tx_date)) || Number(a.amount_cents || 0) - Number(b.amount_cents || 0);
+      if (sortKey === 'amount_desc') return Number(b.amount_cents || 0) - Number(a.amount_cents || 0) || String(b.tx_date).localeCompare(String(a.tx_date));
+      if (sortKey === 'amount_asc') return Number(a.amount_cents || 0) - Number(b.amount_cents || 0) || String(b.tx_date).localeCompare(String(a.tx_date));
+      return String(b.tx_date).localeCompare(String(a.tx_date)) || Number(b.amount_cents || 0) - Number(a.amount_cents || 0);
+    });
+    tbody.innerHTML = rows.length ? rows.map((tx) => `
+      <tr>
+        <td>${escapeHtml(tx.tx_date)}</td>
+        <td>${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
+        <td>${fmtMoney(tx.amount_cents)}</td>
+        <td>${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
+        <td>${escapeHtml(tx.notes || '')}</td>
+      </tr>`).join('') : '<tr><td colspan="5">No transactions match the selected filters.</td></tr>';
+  }
+
+  card.querySelectorAll('select').forEach((el) => { el.onchange = draw; });
+  draw();
 }
 
 function renderPasswordChange(container) {
@@ -540,6 +681,7 @@ function renderAdmin(container) {
         <div class="stack-sm">
           <input id="lastUpdated" placeholder="Last Updated (YYYY-MM-DD)" />
           <button id="saveLastUpdated">Save</button>
+          <button id="downloadBackup" class="ghost-btn">Download Backup</button>
         </div>
       </div>`;
 
@@ -559,6 +701,7 @@ function renderAdmin(container) {
     sidebar.querySelector('#createUser').onclick = async () => {
       const email = sidebar.querySelector('#newEmail').value.trim();
       const password = sidebar.querySelector('#newPass').value.trim();
+      const label = sidebar.querySelector('#newLabel').value.trim();
       if (!email) return toast('Email required.', false);
       try {
         const created = await api('/api/admin/users', { method: 'POST', body: JSON.stringify({ email, password: password || undefined, display_label: label || undefined }) });
@@ -580,6 +723,23 @@ function renderAdmin(container) {
         toast('Last updated saved.');
       } catch (e) {
         toast(e.message || 'Save failed.', false);
+      }
+    };
+    sidebar.querySelector('#downloadBackup').onclick = async () => {
+      try {
+        const res = await fetch('/api/admin/backup', { headers: { Authorization: `Bearer ${state.token}` } });
+        if (!res.ok) throw new Error('Backup failed');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'benjamin-fund-backup.sqlite';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+      } catch (e) {
+        toast(e.message || 'Backup failed.', false);
       }
     };
   }
@@ -635,6 +795,7 @@ function renderAdmin(container) {
       renderAdminYearlyTotalsSection(detail, bundle);
       renderAdminBalancesSection(detail, bundle);
       renderAdminTransactionsSection(detail, bundle);
+      renderAdminFundNavSection(detail);
     } catch (e) {
       detail.innerHTML = `<div class="card inner-card"><div class="subtle">${escapeHtml(e.message || 'Failed to load investor.')}</div></div>`;
     }
@@ -820,6 +981,86 @@ function renderAdmin(container) {
         toast(e.message || 'Save failed.', false);
       }
     };
+  }
+
+
+  function renderAdminFundNavSection(parent) {
+    const card = document.createElement('div');
+    card.className = 'card inner-card';
+    card.innerHTML = `<h3>Fund NAV / Share</h3><div class="subtle">Manage the public NAV/share chart and optional major event callouts shown on the landing page.</div><div id="fundNavAdminMount" class="top-gap"><div class="subtle">Loading fund chart data…</div></div>`;
+    parent.appendChild(card);
+    const mount = card.querySelector('#fundNavAdminMount');
+    api('/api/admin/fund-nav').then((bundle) => {
+      const navRows = (bundle.navHistory || []).slice().sort((a, b) => String(a.as_of_date).localeCompare(String(b.as_of_date)));
+      const eventRows = (bundle.navEvents || []).slice().sort((a, b) => String(a.event_date).localeCompare(String(b.event_date)));
+      mount.innerHTML = `
+        <div class="grid two-col">
+          <div>
+            <div class="subtle">NAV / Share History</div>
+            <div class="table-wrap top-gap"><table class="table mono"><thead><tr><th>Date</th><th>NAV / Share (USD)</th><th></th></tr></thead><tbody id="navHistoryBody"></tbody></table></div>
+            <div class="row wrap-row top-gap"><button id="addNavRow">Add Row</button><button id="saveNavRows">Save NAV History</button></div>
+          </div>
+          <div>
+            <div class="subtle">Major Fund Events</div>
+            <div class="table-wrap top-gap"><table class="table mono"><thead><tr><th>Date</th><th>Title</th><th>Notes</th><th></th></tr></thead><tbody id="navEventBody"></tbody></table></div>
+            <div class="row wrap-row top-gap"><button id="addNavEventRow" class="ghost-btn">Add Event</button><button id="saveNavEventRows">Save Events</button></div>
+          </div>
+        </div>`;
+      const navBody = mount.querySelector('#navHistoryBody');
+      const eventBody = mount.querySelector('#navEventBody');
+      const addNavRow = (row = {}) => {
+        const tr = makeTableRow([
+          `<td><input class="date-input" type="date" value="${escapeHtml(row.as_of_date || '')}" /></td>`,
+          `<td><input class="money-input nav-share-input" value="${escapeHtml(centsToInput(row.nav_per_share_cents))}" placeholder="0.00" /></td>`,
+          `<td><button class="ghost-btn delete-row">Remove</button></td>`
+        ]);
+        tr.querySelector('.delete-row').onclick = () => tr.remove();
+        navBody.appendChild(tr);
+      };
+      const addEventRow = (row = {}) => {
+        const tr = makeTableRow([
+          `<td><input class="date-input" type="date" value="${escapeHtml(row.event_date || '')}" /></td>`,
+          `<td><input class="event-title-input" value="${escapeHtml(row.title || '')}" placeholder="Event title" /></td>`,
+          `<td><input class="event-notes-input" value="${escapeHtml(row.notes || '')}" placeholder="Optional note" /></td>`,
+          `<td><button class="ghost-btn delete-row">Remove</button></td>`
+        ]);
+        tr.querySelector('.delete-row').onclick = () => tr.remove();
+        eventBody.appendChild(tr);
+      };
+      navRows.forEach(addNavRow);
+      eventRows.forEach(addEventRow);
+      if (!navRows.length) addNavRow({});
+      if (!eventRows.length) addEventRow({});
+      mount.querySelector('#addNavRow').onclick = () => addNavRow({});
+      mount.querySelector('#addNavEventRow').onclick = () => addEventRow({});
+      mount.querySelector('#saveNavRows').onclick = async () => {
+        const payload = [...navBody.querySelectorAll('tr')].map((tr) => ({
+          as_of_date: tr.querySelector('.date-input').value,
+          nav_per_share_cents: toUsdInputCents(tr.querySelector('.nav-share-input').value)
+        })).filter((row) => row.as_of_date && row.nav_per_share_cents !== null);
+        try {
+          await api('/api/admin/fund-nav/history', { method: 'PUT', body: JSON.stringify({ rows: payload }) });
+          toast('Fund NAV history saved.');
+        } catch (e) {
+          toast(e.message || 'Save failed.', false);
+        }
+      };
+      mount.querySelector('#saveNavEventRows').onclick = async () => {
+        const payload = [...eventBody.querySelectorAll('tr')].map((tr) => ({
+          event_date: tr.querySelector('.date-input').value,
+          title: tr.querySelector('.event-title-input').value.trim(),
+          notes: tr.querySelector('.event-notes-input').value.trim()
+        })).filter((row) => row.event_date && row.title);
+        try {
+          await api('/api/admin/fund-nav/events', { method: 'PUT', body: JSON.stringify({ rows: payload }) });
+          toast('Fund chart events saved.');
+        } catch (e) {
+          toast(e.message || 'Save failed.', false);
+        }
+      };
+    }).catch((e) => {
+      mount.innerHTML = `<div class="subtle">${escapeHtml(e.message || 'Failed to load fund chart settings.')}</div>`;
+    });
   }
 
   function renderAdminTransactionsSection(parent, bundle) {
