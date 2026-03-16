@@ -192,8 +192,8 @@ async function initDb() {
       )`).catch(() => {});
 }
 
-function signToken(user) {
-  return jwt.sign({ sub: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+function signToken(user, extras = {}) {
+  return jwt.sign({ sub: user.id, email: user.email, role: user.role, ...extras }, JWT_SECRET, { expiresIn: '7d' });
 }
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
@@ -323,7 +323,14 @@ app.get('/api/me', auth, async (req, res) => {
   try {
     const bundle = await loadInvestorBundle(req.user.sub);
     if (!bundle) return res.status(404).json({ error: 'Not found' });
-    res.json(bundle);
+    res.json({
+      ...bundle,
+      session: {
+        impersonating: !!req.user.impersonated_by,
+        actor_sub: req.user.impersonated_by || null,
+        actor_email: req.user.impersonated_by_email || null
+      }
+    });
   } catch {
     res.status(500).json({ error: 'DB error' });
   }
@@ -386,6 +393,26 @@ app.get('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
     const bundle = await loadInvestorBundle(id);
     if (!bundle) return res.status(404).json({ error: 'Not found' });
     res.json(bundle);
+  } catch {
+    res.status(500).json({ error: 'DB error' });
+  }
+});
+
+app.post('/api/admin/users/:id/impersonate', auth, adminOnly, async (req, res) => {
+  try {
+    const id = parseId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Bad id' });
+    const target = await get('SELECT id, email, role FROM users WHERE id = ?', [id]);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    const token = signToken(target, {
+      impersonated_by: req.user.sub,
+      impersonated_by_email: req.user.email || null
+    });
+    res.json({
+      token,
+      user: { id: target.id, email: target.email, role: target.role },
+      impersonation: { actor_sub: req.user.sub, actor_email: req.user.email || null }
+    });
   } catch {
     res.status(500).json({ error: 'DB error' });
   }

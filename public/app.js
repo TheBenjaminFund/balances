@@ -1,5 +1,5 @@
 const app = document.getElementById('app');
-const state = { token: null, user: null, adminSelectedUserId: null, adminSelectedBalanceYear: null, adminSort: 'label_asc', publicNavLoaded: false };
+const state = { token: null, user: null, adminToken: null, adminUser: null, impersonation: null, adminSelectedUserId: null, adminSelectedBalanceYear: null, adminSort: 'label_asc', publicNavLoaded: false };
 
 const fmtMoney = (cents) => {
   if (cents === null || cents === undefined || Number.isNaN(Number(cents))) return '—';
@@ -53,6 +53,25 @@ const sortAdminUsers = (users, sortKey) => {
   });
   return items;
 };
+function clearSession() {
+  state.token = null;
+  state.user = null;
+  state.adminToken = null;
+  state.adminUser = null;
+  state.impersonation = null;
+  state.adminSelectedUserId = null;
+}
+
+function stopImpersonation() {
+  if (!state.impersonation || !state.adminToken) return;
+  state.token = state.adminToken;
+  state.user = state.adminUser || null;
+  state.impersonation = null;
+  state.adminToken = null;
+  state.adminUser = null;
+  renderHome();
+}
+
 function summarizeTransactionsByDate(transactions) {
   const map = new Map();
   (transactions || []).forEach((tx) => {
@@ -417,6 +436,9 @@ function renderLogin() {
       const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
       state.token = data.token;
       state.user = data.user;
+      state.adminToken = null;
+      state.adminUser = null;
+      state.impersonation = null;
       renderHome();
     } catch (e) {
       toast(e.message || 'Login failed.', false);
@@ -761,7 +783,7 @@ function renderAdmin(container) {
           </div>
           <div class="row wrap-row">
             <button id="resetPwdBtn">Reset Password</button>
-            ${bundle.user.role === 'admin' ? '' : '<button id="deleteUserBtn" class="danger-btn">Delete User</button>'}
+            ${bundle.user.role === 'admin' ? '' : '<button id="impersonateBtn" class="ghost-btn">View as Investor</button><button id="deleteUserBtn" class="danger-btn">Delete User</button>'}
           </div>
         </div>`;
       detail.appendChild(header);
@@ -774,6 +796,27 @@ function renderAdmin(container) {
           toast(e.message || 'Reset failed.', false);
         }
       };
+      const impersonateBtn = header.querySelector('#impersonateBtn');
+      if (impersonateBtn) {
+        impersonateBtn.onclick = async () => {
+          try {
+            const resp = await api(`/api/admin/users/${id}/impersonate`, { method: 'POST' });
+            state.adminToken = state.token;
+            state.adminUser = state.user;
+            state.token = resp.token;
+            state.user = resp.user;
+            state.impersonation = {
+              actorEmail: (resp.impersonation && resp.impersonation.actor_email) || bundle.user.email,
+              investorLabel: getInvestorLabel(bundle.user),
+              investorEmail: bundle.user.email
+            };
+            renderHome();
+            toast(`Viewing as ${getInvestorLabel(bundle.user)}.`);
+          } catch (e) {
+            toast(e.message || 'Impersonation failed.', false);
+          }
+        };
+      }
       const deleteBtn = header.querySelector('#deleteUserBtn');
       if (deleteBtn) {
         deleteBtn.onclick = async () => {
@@ -1149,23 +1192,38 @@ function renderHome() {
   app.innerHTML = '';
   const acct = document.getElementById('siteHeaderAcct');
   if (acct) {
-    acct.innerHTML = `<div class="row wrap-row"><div class="subtle">${escapeHtml(state.user.email)} (${escapeHtml(state.user.role)})</div><button id="logout">Logout</button></div>`;
+    const adminViewing = state.impersonation ? `<button id="returnAdmin" class="ghost-btn">Return to Admin</button>` : '';
+    acct.innerHTML = `<div class="row wrap-row"><div class="subtle">${escapeHtml(state.user.email)} (${escapeHtml(state.user.role)})</div>${adminViewing}<button id="logout">Logout</button></div>`;
     acct.querySelector('#logout').onclick = () => {
-      state.token = null;
-      state.user = null;
-      state.adminSelectedUserId = null;
+      clearSession();
       renderLogin();
     };
+    const returnBtn = acct.querySelector('#returnAdmin');
+    if (returnBtn) returnBtn.onclick = () => stopImpersonation();
   }
   renderLastUpdatedSection(app);
   api('/api/me').then((bundle) => {
     state.user = bundle.user;
+    if (bundle.session?.impersonating && !state.impersonation) {
+      state.impersonation = {
+        actorEmail: bundle.session.actor_email || 'Admin',
+        investorLabel: getInvestorLabel(bundle.user),
+        investorEmail: bundle.user.email
+      };
+    }
+    if (state.impersonation) {
+      const banner = document.createElement('div');
+      banner.className = 'card impersonation-banner';
+      banner.innerHTML = `<div class="row wrap-row impersonation-row"><div><strong>Admin impersonation mode</strong><div class="subtle">Viewing the investor dashboard for ${escapeHtml(getInvestorLabel(bundle.user))} (${escapeHtml(bundle.user.email)}). Signed in as admin: ${escapeHtml(state.impersonation.actorEmail || '—')}.</div></div><button id="bannerReturnAdmin" class="ghost-btn">Return to Admin</button></div>`;
+      app.appendChild(banner);
+      banner.querySelector('#bannerReturnAdmin').onclick = () => stopImpersonation();
+    }
     renderSummaryCards(app, bundle);
     renderBalanceSection(app, bundle);
     renderNetDepositsSection(app, bundle);
     renderTransactionsSection(app, bundle);
     renderPasswordChange(app);
-    if (bundle.user.role === 'admin') renderAdmin(app);
+    if (bundle.user.role === 'admin' && !bundle.session?.impersonating) renderAdmin(app);
   }).catch((e) => toast(e.message || 'Failed to load profile.', false));
 }
 

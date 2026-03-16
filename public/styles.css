@@ -69,3 +69,5 @@ button.danger-btn{background:linear-gradient(135deg,#b60000,#ff4d4d)}
   .value{font-size:21px}
   .login-card{max-width:none;margin:0}
 }
+
+.impersonation-banner{border:1px solid rgba(4,161,86,.35);background:linear-gradient(135deg,rgba(4,161,86,.08),rgba(22,27,24,.98));box-shadow:none}.impersonation-row{justify-content:space-between;align-items:flex-start}.impersonation-row .subtle{max-width:78ch;line-height:1.45}

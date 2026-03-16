@@ -1,94 +1,170 @@
-# Benjamin Fund – Investor Portal
+# Benjamin Fund Investor Portal
 
-A lightweight Node/Express + SQLite web app for investors to view balances and performance, with an admin portal to manage users and update figures.
+A lightweight Node/Express + SQLite portal for private-fund operations.
 
-## What’s Included
-- **Share price removed** entirely (backend + frontend).
-- **User password change** flow (`PATCH /api/me/password`) + UI card.
-- **2024 Results** on the investor dashboard:
-  - 2024 Deposits, 2024 Ending Balance, 2024 Performance ($ and %)
-  - Clearly labeled as 2024-only (separate from overall totals)
-- **Admin UI** polish:
-  - Users table shows **Balance**, **Deposit**, **2024 Deposits**, **2024 Ending**
-  - Inline editors for totals + 2024 fields; Reset Password; Delete
-- **Money formatting** with commas/currency via `Intl.NumberFormat`.
-- **Persistence**: stores SQLite at `DATA_DIR` so data survives restarts.
+It includes:
+- a public landing page with a manually maintained NAV/share chart
+- an investor dashboard with balance history, transaction filtering, and yearly net-deposit reporting
+- an admin portal for user management, balance history entry, transaction maintenance, fund NAV maintenance, backups, and investor impersonation
+
+## Core Features
+
+### Public landing page
+- branded login experience
+- public NAV/share chart with range toggles
+- admin-managed fund event markers for notable dates
+- mobile-friendly investor/public layout
+
+### Investor dashboard
+- account summary with **Total Invested**, **Current NAV**, and return
+- balance-history chart with custom tooltips and transaction markers
+- net-deposits-by-year bar chart
+- transaction table with:
+  - type filter
+  - year filter
+  - newest/oldest sorting
+  - amount high/low sorting
+- password change flow
+
+### Admin portal
+- create investors and reset passwords
+- assign custom investor display labels
+- sort investor list by label, NAV, invested capital, and return
+- maintain weekly/biweekly balance history
+- bulk-paste balance history from spreadsheets
+- maintain investor transaction ledgers
+- maintain public fund NAV/share history
+- bulk-paste NAV/share history from spreadsheets
+- maintain public fund event markers
+- download SQLite backups
+- **View as Investor** impersonation mode with one-click return to admin
+
+## Tech Stack
+- Node.js
+- Express
+- SQLite
+- Vanilla JavaScript
+- HTML/CSS
+- JWT auth
+- bcrypt password hashing
+
+## Project Structure
+
+```text
+.
+├── server.js            # Express server, auth, API routes, SQLite setup
+├── public/
+│   ├── index.html       # Single-page shell
+│   ├── app.js           # Frontend rendering and admin/investor logic
+│   ├── styles.css       # Main styles
+│   ├── theme.css        # Theme variables
+│   └── logo.png         # Branding asset
+├── .env.sample          # Example environment variables
+├── .gitignore           # Recommended ignores for safe sharing
+├── package.json
+└── README.md
+```
 
 ## Local Quick Start
+
 1. Install dependencies:
    ```bash
    npm install
    ```
-2. Create a `.env` from the sample and fill in values:
+2. Create a local env file from the sample:
    ```bash
    cp .env.sample .env
-   # edit .env
    ```
-3. Run the server:
+3. Fill in the required variables.
+4. Start the app:
    ```bash
    npm start
-   # open http://localhost:3000
    ```
+5. Open `http://localhost:3000`
 
-### Required Environment Variables
-(See `.env.sample` for a template.)
-- `ADMIN_EMAIL` – bootstrap admin email (created at first run if missing)
-- `ADMIN_PASSWORD` – initial admin password
-- `JWT_SECRET` – long random string for signing tokens
-- `DATA_DIR` – path for SQLite persistence (e.g., `./data` locally or `/var/data` on Render)
-- Optional: `PORT` – defaults to 3000
+## Environment Variables
 
-## Deploying to Render
-1. Create a **Web Service**.
-2. **Environment Variables** (Settings → Environment):
-   - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`
-   - `DATA_DIR=/var/data`
-3. **Disks**: add a persistent disk mounted at `/var/data` (matches `DATA_DIR`).
-4. Build command: `npm install` (default)  
-   Start command: `npm start`
-5. Node version is controlled via `package.json` (`"engines": { "node": "20.x" }`).  
-   A separate `.node-version` file is **not required**.
+The app is designed to read sensitive values from environment variables rather than hardcoding them.
+
+Required:
+- `ADMIN_EMAIL` – bootstrap admin email
+- `ADMIN_PASSWORD` – bootstrap admin password
+- `JWT_SECRET` – long random token-signing secret
+- `DATA_DIR` – directory for SQLite persistence
+
+Optional:
+- `PORT` – defaults to `3000`
+
+## Render Deployment Notes
+
+This project works well on Render.
+
+Recommended setup:
+- put `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `JWT_SECRET`, and `DATA_DIR` in Render's **Environment** tab
+- mount a persistent disk and point `DATA_DIR` to that mounted path
+- use `npm install` as the build command and `npm start` as the start command
+
+Because secrets live in Render environment variables, the repository can be shared with developers much more safely than if credentials were committed directly.
+
+## Safe Sharing / Handoff Notes
+
+If you want another developer to review or edit the portal, this is the intended workflow:
+- share the code repository
+- keep secrets in Render environment variables
+- do **not** commit the production SQLite database, backups, exports, or uploads
+
+Recommended `.gitignore` entries are included.
+
+If production data was committed in old Git history, that should be cleaned separately before broad sharing.
 
 ## API Overview
 
-### Auth & Profile
-- `POST /api/auth/login` → `{ token, user, balance_cents, deposit_cents, year_2024_* }`
-- `GET /api/me` (auth) → user + balances
-- `PATCH /api/me/password` (auth) → body `{ current_password, new_password }`
+### Auth
+- `POST /api/auth/login`
+- `GET /api/me`
+- `PATCH /api/me/password`
 
-### Admin – Users (auth + admin)
+### Admin: investors
 - `GET /api/admin/users`
-- `POST /api/admin/users` → create user (optional `password` to set explicit)
-- `POST /api/admin/users/:id/reset-password` → returns `{ password: <temp> }`
+- `GET /api/admin/users/:id`
+- `POST /api/admin/users`
+- `PATCH /api/admin/users/:id/summary`
+- `PUT /api/admin/users/:id/balance-history/:year`
+- `PUT /api/admin/users/:id/transactions`
+- `POST /api/admin/users/:id/reset-password`
+- `POST /api/admin/users/:id/impersonate`
 - `DELETE /api/admin/users/:id`
-- `PATCH /api/admin/users/:id/balance` → `{ balance_cents }`
-- `PATCH /api/admin/users/:id/deposit` → `{ deposit_cents }`
-- `PATCH /api/admin/users/:id/year/2024` → `{ deposits_cents?, ending_balance_cents? }` (either or both)
 
-### Admin – Settings (auth + admin)
-- `GET /api/admin/last-updated` → `{ last_updated }`
-- `POST /api/admin/last-updated` → `{ last_updated }` (upsert)
+### Admin: fund-level data
+- `GET /api/admin/fund-nav`
+- `PUT /api/admin/fund-nav/history`
+- `PUT /api/admin/fund-nav/events`
+- `GET /api/admin/backup`
 
-### Public
-- `GET /api/public-stats` → `{ last_updated }`
+### Settings / public
+- `GET /api/admin/last-updated`
+- `POST /api/admin/last-updated`
+- `GET /api/public-landing`
 
-## Data Model
-Table `users`:
-- `id`, `email`, `password_hash`, `role`
-- `balance_cents`, `deposit_cents`
-- `year_2024_deposits_cents`, `year_2024_ending_balance_cents`
-- `created_at` (ISO UTC)
+## Data Notes
+- currency values are stored as **integer cents**
+- balances are intended to reflect actual manual accounting dates
+- transactions drive yearly net deposits automatically
+- the latest balance-history row drives current NAV automatically
+- fund NAV/share history is maintained separately for the public landing page
 
-Table `settings`:
-- `key` (PK), `value`
+## For Developers Jumping In
 
-## Notes & Conventions
-- **Currency** values are stored as **cents** (integers) to avoid floating-point errors.
-- The UI accepts USD strings; the client converts to cents for the API.
-- The admin user is created at first boot if it doesn’t exist (from `ADMIN_EMAIL`/`ADMIN_PASSWORD`).
+If you are reviewing this project for the first time, the best entry points are:
+- `server.js` for database schema, auth, and route behavior
+- `public/app.js` for rendering logic and admin workflow
+- `renderAdmin(...)` in `public/app.js` for most admin UX work
+- `renderHome(...)`, `renderBalanceSection(...)`, and `renderTransactionsSection(...)` for investor-facing features
+- `renderPublicNavSection(...)` for the landing-page NAV/share chart
 
-## Changelog Highlights
-- Removed share price (all routes, queries, and UI).
-- Added password change for users.
-- Added 2024 stats (fields, endpoint, and UI tiles).
-- Money formatting improvements and UI polish.
+## Current Priorities / Likely Next Additions
+- investor document center
+- PDF statement generation
+- additional mobile polish
+- optional security hardening / sanitized shareable repo mode
+
