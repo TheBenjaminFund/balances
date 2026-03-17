@@ -6,6 +6,15 @@ const fmtMoney = (cents) => {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(Number(cents) / 100);
 };
 const fmtPct = (n) => (n === null || n === undefined || Number.isNaN(Number(n)) ? '—' : `${Number(n).toFixed(2)}%`);
+const fmtAxisMoney = (cents, compact = false) => {
+  if (cents === null || cents === undefined || Number.isNaN(Number(cents))) return '—';
+  const dollars = Number(cents) / 100;
+  if (!compact) return fmtMoney(cents);
+  const abs = Math.abs(dollars);
+  if (abs >= 1000000) return `$${(dollars / 1000000).toFixed(abs >= 10000000 ? 0 : 1)}M`;
+  if (abs >= 1000) return `$${(dollars / 1000).toFixed(abs >= 100000 ? 0 : 1)}K`;
+  return fmtMoney(cents);
+};
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const toUsdInputCents = (v) => {
   if (v === null || v === undefined || v === '') return null;
@@ -147,7 +156,7 @@ function buildChartSvg(points, opts = {}) {
   const width = opts.width || (mobileMode ? (opts.type === 'bar' ? 430 : 440) : 860);
   const height = opts.height || (mobileMode ? (opts.type === 'bar' ? 250 : 320) : 300);
   const pad = mobileMode
-    ? { left: opts.type === 'bar' ? 58 : 52, right: 14, top: 14, bottom: 34 }
+    ? { left: opts.type === 'bar' ? 68 : 72, right: opts.type === 'bar' ? 18 : 16, top: 14, bottom: 34 }
     : { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
@@ -206,7 +215,7 @@ function buildChartSvg(points, opts = {}) {
     const y = yScale(v);
     return `
       <line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" class="chart-grid" />
-      <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-y-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
+      <text x="${pad.left - 8}" y="${y + 4}" text-anchor="end" class="chart-y-label">${escapeHtml(fmtAxisMoney(Math.round(v * 100), mobileMode))}</text>`;
   }).join('');
 
   const tooltipMarkup = (x, y, lines = []) => {
@@ -424,7 +433,6 @@ function renderLogin() {
           <div class="stat"><div class="label">Portal Access</div><div class="value small-value">Secure Login</div></div>
         </div>
       </div>
-      <div id="publicNavMount"></div>
     </div>
     <div class="public-right">
       <div class="card login-card public-login-card">
@@ -436,7 +444,8 @@ function renderLogin() {
           <button id="login">Login</button>
         </div>
       </div>
-    </div>`;
+    </div>
+    <div id="publicNavMount" class="public-nav-mount"></div>`;
   app.appendChild(shell);
   shell.querySelector('#login').onclick = async () => {
     const email = shell.querySelector('#email').value.trim();
