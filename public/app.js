@@ -143,9 +143,12 @@ async function api(path, opts = {}) {
 
 function buildChartSvg(points, opts = {}) {
   if (!points || !points.length) return '<div class="empty-state">No data entered yet.</div>';
-  const width = opts.width || 860;
-  const height = opts.height || 300;
-  const pad = { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
+  const mobileMode = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 720px)').matches;
+  const width = opts.width || (mobileMode ? (opts.type === 'bar' ? 430 : 440) : 860);
+  const height = opts.height || (mobileMode ? (opts.type === 'bar' ? 250 : 320) : 300);
+  const pad = mobileMode
+    ? { left: opts.type === 'bar' ? 58 : 52, right: 14, top: 14, bottom: 34 }
+    : { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
   const rawMinY = Math.min(...ys);
@@ -197,13 +200,13 @@ function buildChartSvg(points, opts = {}) {
   const plotH = height - pad.top - pad.bottom;
   const yScale = (y) => pad.top + (1 - ((y - minY) / (maxY - minY))) * plotH;
   const zeroY = minY <= 0 && maxY >= 0 ? yScale(0) : null;
-  const ticks = 4;
+  const ticks = mobileMode ? 3 : 4;
   const yTickMarkup = Array.from({ length: ticks + 1 }, (_, i) => {
     const v = minY + ((maxY - minY) * i) / ticks;
     const y = yScale(v);
     return `
       <line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" class="chart-grid" />
-      <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
+      <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-y-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
   }).join('');
 
   const tooltipMarkup = (x, y, lines = []) => {
@@ -269,9 +272,16 @@ function buildChartSvg(points, opts = {}) {
   const xScale = (x) => pad.left + ((x - lineMinX) / (lineMaxX - lineMinX)) * plotW;
   const line = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(' ');
   const area = `${line} L ${xScale(linePoints[linePoints.length - 1].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} L ${xScale(linePoints[0].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} Z`;
-  const xLabels = [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]]
+  const xLabelPoints = mobileMode
+    ? [linePoints[0], linePoints[linePoints.length - 1]]
+    : [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]];
+  const xLabels = xLabelPoints
     .filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
-    .map((p) => `<text x="${xScale(p.x)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`).join('');
+    .map((p, idx, arr) => {
+      const anchor = mobileMode ? (idx === 0 ? 'start' : 'end') : 'middle';
+      const x = mobileMode ? (idx === 0 ? pad.left : width - pad.right) : xScale(p.x);
+      return `<text x="${x}" y="${height - 10}" text-anchor="${anchor}" class="chart-x-label">${escapeHtml(p.label)}</text>`;
+    }).join('');
 
   return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
     ${yTickMarkup}
@@ -623,15 +633,15 @@ function renderTransactionsSection(container, bundle) {
         <td data-label="Notes">${escapeHtml(tx.notes || '')}</td>
       </tr>`).join('') : '<tr><td colspan="5">No transactions match the selected filters.</td></tr>';
     mobileList.innerHTML = rows.length ? rows.map((tx) => `
-      <article class="mobile-tx-card ${tx.tx_type === 'redemption' ? 'tx-redemption' : 'tx-deposit'}">
-        <div class="mobile-tx-head">
-          <div class="mobile-tx-date">${escapeHtml(tx.tx_date)}</div>
-          <div class="mobile-tx-pill">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</div>
+      <article class="mobile-tx-card compact ${tx.tx_type === 'redemption' ? 'tx-redemption' : 'tx-deposit'}">
+        <div class="mobile-tx-row-top">
+          <span class="mobile-tx-date">${escapeHtml(tx.tx_date)}</span>
+          <span class="mobile-tx-pill">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</span>
+          <strong class="mobile-tx-amount">${fmtMoney(tx.amount_cents)}</strong>
         </div>
-        <div class="mobile-tx-amount">${fmtMoney(tx.amount_cents)}</div>
-        <div class="mobile-tx-meta">
-          <div><span class="mobile-tx-label">NAV / Share</span><strong>${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</strong></div>
-          <div><span class="mobile-tx-label">Note</span><span>${escapeHtml(tx.notes || '—')}</span></div>
+        <div class="mobile-tx-row-bottom">
+          <span class="mobile-tx-nav">NAV ${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</span>
+          <span class="mobile-tx-note">${escapeHtml(tx.notes || '—')}</span>
         </div>
       </article>`).join('') : '<div class="empty-state">No transactions match the selected filters.</div>';
   }
