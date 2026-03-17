@@ -332,7 +332,7 @@ function renderLastUpdatedSection(parent) {
 
 function renderPublicNavSection(container, landing) {
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card public-nav-card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -404,7 +404,7 @@ function renderLogin() {
   shell.className = 'public-shell';
   shell.innerHTML = `
     <div class="public-left">
-      <div class="card hero-card">
+      <div class="card hero-card public-hero-card">
         <div class="eyebrow">The Benjamin Fund</div>
         <h1>Investor Experience</h1>
         <div class="subtle hero-copy">A secure dashboard for investor balances, transactions, and account reporting.</div>
@@ -462,7 +462,7 @@ function renderSummaryCards(container, bundle) {
   const pct = dep > 0 ? (change / dep) * 100 : null;
   const tone = pct === null ? 'neutral' : change >= 0 ? 'pos' : 'neg';
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card summary-card';
   card.innerHTML = `
     <h2>Account Summary</h2>
     <div class="stats summary-stats">
@@ -475,7 +475,7 @@ function renderSummaryCards(container, bundle) {
 
 function renderBalanceSection(container, bundle) {
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card balance-section-card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -551,7 +551,7 @@ function renderBalanceSection(container, bundle) {
 function renderNetDepositsSection(container, bundle) {
   const rows = (bundle.yearlyTotals || []).slice().sort((a, b) => a.year - b.year);
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card net-deposits-card';
   card.innerHTML = `
     <h2>Net Deposits by Year</h2>
     <div class="subtle">Negative values are displayed below zero.</div>
@@ -562,7 +562,7 @@ function renderNetDepositsSection(container, bundle) {
 function renderTransactionsSection(container, bundle) {
   const allRows = (bundle.transactions || []).slice();
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card transactions-card';
   card.innerHTML = `
     <div class="section-head">
       <div>
