@@ -408,7 +408,7 @@ function renderLogin() {
         <div class="eyebrow">The Benjamin Fund</div>
         <h1>Investor Experience</h1>
         <div class="subtle hero-copy">A secure dashboard for investor balances, transactions, and account reporting.</div>
-        <div class="stats three compact-stats hero-stats" id="publicHeroStats">
+        <div class="stats three compact-stats hero-stats mobile-hero-stats" id="publicHeroStats">
           <div class="stat"><div class="label">Current NAV / Share</div><div class="value">—</div></div>
           <div class="stat"><div class="label">Last Updated</div><div class="value small-value">—</div></div>
           <div class="stat"><div class="label">Portal Access</div><div class="value small-value">Secure Login</div></div>
@@ -465,7 +465,7 @@ function renderSummaryCards(container, bundle) {
   card.className = 'card';
   card.innerHTML = `
     <h2>Account Summary</h2>
-    <div class="stats">
+    <div class="stats summary-stats">
       <div class="stat"><div class="label">Total Invested</div><div class="value">${fmtMoney(dep)}</div></div>
       <div class="stat"><div class="label">Current NAV</div><div class="value">${fmtMoney(bal)}</div></div>
       <div class="stat perf-big"><div class="label">Return</div><div class="value"><span class="${tone}">${pct === null ? '—' : `${fmtPct(pct)} (${fmtMoney(change)})`}</span></div></div>
@@ -584,12 +584,13 @@ function renderTransactionsSection(container, bundle) {
         </select>
       </div>
     </div>
-    <div class="table-wrap">
-      <table class="table mono">
+    <div class="table-wrap transaction-table-wrap">
+      <table class="table mono transaction-table">
         <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>NAV / Share</th><th>Notes</th></tr></thead>
         <tbody id="txTableBody"></tbody>
       </table>
-    </div>`;
+    </div>
+    <div class="mobile-transaction-list" id="txMobileList"></div>`;
   container.appendChild(card);
   const yearSelect = card.querySelector('#txFilterYear');
   uniqueYears(allRows, 'tx_date').reverse().forEach((year) => {
@@ -612,14 +613,27 @@ function renderTransactionsSection(container, bundle) {
       if (sortKey === 'amount_asc') return Number(a.amount_cents || 0) - Number(b.amount_cents || 0) || String(b.tx_date).localeCompare(String(a.tx_date));
       return String(b.tx_date).localeCompare(String(a.tx_date)) || Number(b.amount_cents || 0) - Number(a.amount_cents || 0);
     });
+    const mobileList = card.querySelector('#txMobileList');
     tbody.innerHTML = rows.length ? rows.map((tx) => `
       <tr>
-        <td>${escapeHtml(tx.tx_date)}</td>
-        <td>${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
-        <td>${fmtMoney(tx.amount_cents)}</td>
-        <td>${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
-        <td>${escapeHtml(tx.notes || '')}</td>
+        <td data-label="Date">${escapeHtml(tx.tx_date)}</td>
+        <td data-label="Type">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
+        <td data-label="Amount">${fmtMoney(tx.amount_cents)}</td>
+        <td data-label="NAV / Share">${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
+        <td data-label="Notes">${escapeHtml(tx.notes || '')}</td>
       </tr>`).join('') : '<tr><td colspan="5">No transactions match the selected filters.</td></tr>';
+    mobileList.innerHTML = rows.length ? rows.map((tx) => `
+      <article class="mobile-tx-card ${tx.tx_type === 'redemption' ? 'tx-redemption' : 'tx-deposit'}">
+        <div class="mobile-tx-head">
+          <div class="mobile-tx-date">${escapeHtml(tx.tx_date)}</div>
+          <div class="mobile-tx-pill">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</div>
+        </div>
+        <div class="mobile-tx-amount">${fmtMoney(tx.amount_cents)}</div>
+        <div class="mobile-tx-meta">
+          <div><span class="mobile-tx-label">NAV / Share</span><strong>${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</strong></div>
+          <div><span class="mobile-tx-label">Note</span><span>${escapeHtml(tx.notes || '—')}</span></div>
+        </div>
+      </article>`).join('') : '<div class="empty-state">No transactions match the selected filters.</div>';
   }
 
   card.querySelectorAll('select').forEach((el) => { el.onchange = draw; });
