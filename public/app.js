@@ -6,15 +6,6 @@ const fmtMoney = (cents) => {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(Number(cents) / 100);
 };
 const fmtPct = (n) => (n === null || n === undefined || Number.isNaN(Number(n)) ? '—' : `${Number(n).toFixed(2)}%`);
-const fmtAxisMoney = (cents, compact = false) => {
-  if (cents === null || cents === undefined || Number.isNaN(Number(cents))) return '—';
-  const dollars = Number(cents) / 100;
-  if (!compact) return fmtMoney(cents);
-  const abs = Math.abs(dollars);
-  if (abs >= 1000000) return `$${(dollars / 1000000).toFixed(abs >= 10000000 ? 0 : 1)}M`;
-  if (abs >= 1000) return `$${(dollars / 1000).toFixed(abs >= 100000 ? 0 : 1)}K`;
-  return fmtMoney(cents);
-};
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const toUsdInputCents = (v) => {
   if (v === null || v === undefined || v === '') return null;
@@ -152,12 +143,9 @@ async function api(path, opts = {}) {
 
 function buildChartSvg(points, opts = {}) {
   if (!points || !points.length) return '<div class="empty-state">No data entered yet.</div>';
-  const mobileMode = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 720px)').matches;
-  const width = opts.width || (mobileMode ? (opts.type === 'bar' ? 430 : 440) : 860);
-  const height = opts.height || (mobileMode ? (opts.type === 'bar' ? 250 : 320) : 300);
-  const pad = mobileMode
-    ? { left: opts.type === 'bar' ? 68 : 72, right: opts.type === 'bar' ? 18 : 16, top: 14, bottom: 34 }
-    : { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
+  const width = opts.width || 860;
+  const height = opts.height || 300;
+  const pad = { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
   const rawMinY = Math.min(...ys);
@@ -209,13 +197,13 @@ function buildChartSvg(points, opts = {}) {
   const plotH = height - pad.top - pad.bottom;
   const yScale = (y) => pad.top + (1 - ((y - minY) / (maxY - minY))) * plotH;
   const zeroY = minY <= 0 && maxY >= 0 ? yScale(0) : null;
-  const ticks = mobileMode ? 3 : 4;
+  const ticks = 4;
   const yTickMarkup = Array.from({ length: ticks + 1 }, (_, i) => {
     const v = minY + ((maxY - minY) * i) / ticks;
     const y = yScale(v);
     return `
       <line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" class="chart-grid" />
-      <text x="${pad.left - 8}" y="${y + 4}" text-anchor="end" class="chart-y-label">${escapeHtml(fmtAxisMoney(Math.round(v * 100), mobileMode))}</text>`;
+      <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
   }).join('');
 
   const tooltipMarkup = (x, y, lines = []) => {
@@ -281,16 +269,9 @@ function buildChartSvg(points, opts = {}) {
   const xScale = (x) => pad.left + ((x - lineMinX) / (lineMaxX - lineMinX)) * plotW;
   const line = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(' ');
   const area = `${line} L ${xScale(linePoints[linePoints.length - 1].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} L ${xScale(linePoints[0].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} Z`;
-  const xLabelPoints = mobileMode
-    ? [linePoints[0], linePoints[linePoints.length - 1]]
-    : [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]];
-  const xLabels = xLabelPoints
+  const xLabels = [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]]
     .filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
-    .map((p, idx, arr) => {
-      const anchor = mobileMode ? (idx === 0 ? 'start' : 'end') : 'middle';
-      const x = mobileMode ? (idx === 0 ? pad.left : width - pad.right) : xScale(p.x);
-      return `<text x="${x}" y="${height - 10}" text-anchor="${anchor}" class="chart-x-label">${escapeHtml(p.label)}</text>`;
-    }).join('');
+    .map((p) => `<text x="${xScale(p.x)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`).join('');
 
   return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
     ${yTickMarkup}
@@ -351,7 +332,7 @@ function renderLastUpdatedSection(parent) {
 
 function renderPublicNavSection(container, landing) {
   const card = document.createElement('div');
-  card.className = 'card public-nav-card';
+  card.className = 'card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -423,16 +404,17 @@ function renderLogin() {
   shell.className = 'public-shell';
   shell.innerHTML = `
     <div class="public-left">
-      <div class="card hero-card public-hero-card">
+      <div class="card hero-card">
         <div class="eyebrow">The Benjamin Fund</div>
         <h1>Investor Experience</h1>
         <div class="subtle hero-copy">A secure dashboard for investor balances, transactions, and account reporting.</div>
-        <div class="stats three compact-stats hero-stats mobile-hero-stats" id="publicHeroStats">
+        <div class="stats three compact-stats hero-stats" id="publicHeroStats">
           <div class="stat"><div class="label">Current NAV / Share</div><div class="value">—</div></div>
           <div class="stat"><div class="label">Last Updated</div><div class="value small-value">—</div></div>
           <div class="stat"><div class="label">Portal Access</div><div class="value small-value">Secure Login</div></div>
         </div>
       </div>
+      <div id="publicNavMount"></div>
     </div>
     <div class="public-right">
       <div class="card login-card public-login-card">
@@ -444,8 +426,7 @@ function renderLogin() {
           <button id="login">Login</button>
         </div>
       </div>
-    </div>
-    <div id="publicNavMount" class="public-nav-mount"></div>`;
+    </div>`;
   app.appendChild(shell);
   shell.querySelector('#login').onclick = async () => {
     const email = shell.querySelector('#email').value.trim();
@@ -481,10 +462,10 @@ function renderSummaryCards(container, bundle) {
   const pct = dep > 0 ? (change / dep) * 100 : null;
   const tone = pct === null ? 'neutral' : change >= 0 ? 'pos' : 'neg';
   const card = document.createElement('div');
-  card.className = 'card summary-card';
+  card.className = 'card';
   card.innerHTML = `
     <h2>Account Summary</h2>
-    <div class="stats summary-stats">
+    <div class="stats">
       <div class="stat"><div class="label">Total Invested</div><div class="value">${fmtMoney(dep)}</div></div>
       <div class="stat"><div class="label">Current NAV</div><div class="value">${fmtMoney(bal)}</div></div>
       <div class="stat perf-big"><div class="label">Return</div><div class="value"><span class="${tone}">${pct === null ? '—' : `${fmtPct(pct)} (${fmtMoney(change)})`}</span></div></div>
@@ -494,7 +475,7 @@ function renderSummaryCards(container, bundle) {
 
 function renderBalanceSection(container, bundle) {
   const card = document.createElement('div');
-  card.className = 'card balance-section-card';
+  card.className = 'card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -570,7 +551,7 @@ function renderBalanceSection(container, bundle) {
 function renderNetDepositsSection(container, bundle) {
   const rows = (bundle.yearlyTotals || []).slice().sort((a, b) => a.year - b.year);
   const card = document.createElement('div');
-  card.className = 'card net-deposits-card';
+  card.className = 'card';
   card.innerHTML = `
     <h2>Net Deposits by Year</h2>
     <div class="subtle">Negative values are displayed below zero.</div>
@@ -581,7 +562,7 @@ function renderNetDepositsSection(container, bundle) {
 function renderTransactionsSection(container, bundle) {
   const allRows = (bundle.transactions || []).slice();
   const card = document.createElement('div');
-  card.className = 'card transactions-card';
+  card.className = 'card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -603,13 +584,12 @@ function renderTransactionsSection(container, bundle) {
         </select>
       </div>
     </div>
-    <div class="table-wrap transaction-table-wrap">
-      <table class="table mono transaction-table">
+    <div class="table-wrap">
+      <table class="table mono">
         <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>NAV / Share</th><th>Notes</th></tr></thead>
         <tbody id="txTableBody"></tbody>
       </table>
-    </div>
-    <div class="mobile-transaction-list" id="txMobileList"></div>`;
+    </div>`;
   container.appendChild(card);
   const yearSelect = card.querySelector('#txFilterYear');
   uniqueYears(allRows, 'tx_date').reverse().forEach((year) => {
@@ -632,27 +612,14 @@ function renderTransactionsSection(container, bundle) {
       if (sortKey === 'amount_asc') return Number(a.amount_cents || 0) - Number(b.amount_cents || 0) || String(b.tx_date).localeCompare(String(a.tx_date));
       return String(b.tx_date).localeCompare(String(a.tx_date)) || Number(b.amount_cents || 0) - Number(a.amount_cents || 0);
     });
-    const mobileList = card.querySelector('#txMobileList');
     tbody.innerHTML = rows.length ? rows.map((tx) => `
       <tr>
-        <td data-label="Date">${escapeHtml(tx.tx_date)}</td>
-        <td data-label="Type">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
-        <td data-label="Amount">${fmtMoney(tx.amount_cents)}</td>
-        <td data-label="NAV / Share">${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
-        <td data-label="Notes">${escapeHtml(tx.notes || '')}</td>
+        <td>${escapeHtml(tx.tx_date)}</td>
+        <td>${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
+        <td>${fmtMoney(tx.amount_cents)}</td>
+        <td>${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
+        <td>${escapeHtml(tx.notes || '')}</td>
       </tr>`).join('') : '<tr><td colspan="5">No transactions match the selected filters.</td></tr>';
-    mobileList.innerHTML = rows.length ? rows.map((tx) => `
-      <article class="mobile-tx-card compact ${tx.tx_type === 'redemption' ? 'tx-redemption' : 'tx-deposit'}">
-        <div class="mobile-tx-row-top">
-          <span class="mobile-tx-date">${escapeHtml(tx.tx_date)}</span>
-          <span class="mobile-tx-pill">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</span>
-          <strong class="mobile-tx-amount">${fmtMoney(tx.amount_cents)}</strong>
-        </div>
-        <div class="mobile-tx-row-bottom">
-          <span class="mobile-tx-nav">NAV ${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</span>
-          <span class="mobile-tx-note">${escapeHtml(tx.notes || '—')}</span>
-        </div>
-      </article>`).join('') : '<div class="empty-state">No transactions match the selected filters.</div>';
   }
 
   card.querySelectorAll('select').forEach((el) => { el.onchange = draw; });

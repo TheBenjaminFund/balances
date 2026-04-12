@@ -9,14 +9,6 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 
-// Update 4-3-26:
-// multer library for file upload
-// generateMonthlyStatements function
-import multer from 'multer';
-import { generateMonthlyStatements } from './statementGenerator.js';
-// end
-
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config();
@@ -30,40 +22,6 @@ const app = express();
 app.use(express.json({ limit: '4mb' }));
 app.use(cors({ origin: true, credentials: true }));
 app.use(helmet({ crossOriginResourcePolicy: false }));
-
-// Update 4-3-26: for multer file uploads
-
-// Static file serving
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: 0 }));
-
-
-// Multer storage config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = path.join(dataDir, 'uploads');
-    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + '-' + file.originalname);
-  }
-});
-
-// Upload + file filter
-const upload = multer({
-  storage: storage,
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PDF files are allowed'), false);
-    }
-  }
-});
-
-// end
-
 
 let dataDir = process.env.DATA_DIR;
 try {
@@ -201,19 +159,6 @@ async function initDb() {
     notes TEXT
   )`);
 
-// Update 4-3-26: Create documents table
-  await run(`
-    CREATE TABLE IF NOT EXISTS documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      file_name TEXT NOT NULL,
-      file_path TEXT NOT NULL,
-      file_type TEXT NOT NULL DEFAULT 'application/pdf',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(user_id) REFERENCES users(id)
-  )`);
-// end
-
   const cols = await all('PRAGMA table_info(users)');
   const names = (cols || []).map(c => c.name);
   if (!names.includes('year_2024_deposits_cents')) {
@@ -226,7 +171,7 @@ async function initDb() {
     await run("ALTER TABLE users ADD COLUMN display_label TEXT");
   }
 
-  // Seed / ensure admin user
+  // Seed / ensure admin user.
   if (ADMIN_EMAIL) {
     const existing = await get('SELECT id FROM users WHERE email = ?', [ADMIN_EMAIL]).catch(() => null);
     if (!existing) {
@@ -245,31 +190,19 @@ async function initDb() {
       AND NOT EXISTS (
         SELECT 1 FROM investor_yearly_totals y WHERE y.user_id = u.id AND y.year = 2024
       )`).catch(() => {});
-
-
-// Update 4-3-26: Check if file_type column exists in documents table
-  const docCols = await all('PRAGMA table_info(documents)').catch(() => []);
-  const docNames = (docCols || []).map((c) => c.name);
-  if (!docNames.includes('file_type')) {
-    await run("ALTER TABLE documents ADD COLUMN file_type TEXT NOT NULL DEFAULT 'application/pdf'").catch(() => {});
-  }
 }
-// end
 
 function signToken(user, extras = {}) {
   return jwt.sign({ sub: user.id, email: user.email, role: user.role, ...extras }, JWT_SECRET, { expiresIn: '7d' });
 }
-
 function auth(req, res, next) {
   const h = req.headers.authorization || '';
   const token = h.startsWith('Bearer ') ? h.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'missing token' });
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    req.user.id = decoded.sub;
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
-  } catch (err) {
+  } catch {
     return res.status(401).json({ error: 'invalid token' });
   }
 }
@@ -279,63 +212,21 @@ function adminOnly(req, res, next) {
 }
 
 async function loadInvestorBundle(userId) {
-  const user = await get(
-    `SELECT
-      id,
-      email,
-      role,
-      display_label,
-      balance_cents,
-      deposit_cents,
-      year_2024_deposits_cents,
-      year_2024_ending_balance_cents
-    FROM users
-    WHERE id = ?`,
-    [userId]
-  );
-  
+  const user = await get('SELECT id,email,role,balance_cents,deposit_cents,created_at,display_label FROM users WHERE id = ?', [userId]);
   if (!user) return null;
   const storedYearlyTotals = await all(
-    `SELECT year, net_deposits_cents 
-     FROM investor_yearly_totals 
-     WHERE user_id = ? 
-     ORDER BY year ASC`,
+    'SELECT year, net_deposits_cents FROM investor_yearly_totals WHERE user_id = ? ORDER BY year ASC',
     [userId]
   );
-
   const balanceHistory = await all(
-    `SELECT as_of_date, balance_cents 
-     FROM investor_balance_history 
-     WHERE user_id = ? 
-     ORDER BY as_of_date ASC`,
+    'SELECT as_of_date, balance_cents FROM investor_balance_history WHERE user_id = ? ORDER BY as_of_date ASC',
     [userId]
   );
-
   const transactions = await all(
     `SELECT id, tx_date, tx_type, amount_cents, nav_per_share_cents, notes
-     FROM investor_transactions 
-     WHERE user_id = ? 
-     ORDER BY tx_date DESC, id DESC`,
+     FROM investor_transactions WHERE user_id = ? ORDER BY tx_date DESC, id DESC`,
     [userId]
   );
-
-
-// Update 4-3-26: loading documents into 'Documents & Statements' section
-  let documents = [];
-  try {
-    documents = await all(
-      `SELECT id, file_name, created_at
-       FROM documents
-       WHERE user_id = ?
-       ORDER BY created_at DESC`,
-       [userId]
-    );
-  } catch (e) {
-    console.error("Non-critical error loading documents:", e.message);
-    documents = [];
-  }
-// end
-
   const derivedYearlyTotals = deriveYearlyTotalsFromTransactions(transactions);
   const yearlyTotals = derivedYearlyTotals.length ? derivedYearlyTotals : storedYearlyTotals;
   user.manual_balance_cents = Number(user.balance_cents || 0);
@@ -344,7 +235,7 @@ async function loadInvestorBundle(userId) {
   user.deposit_cents = sumNetDeposits(yearlyTotals, user.manual_deposit_cents);
   user.uses_derived_totals = derivedYearlyTotals.length > 0;
   user.uses_derived_balance = balanceHistory.length > 0;
-  return { user, yearlyTotals, balanceHistory, transactions, documents }; // added documents
+  return { user, yearlyTotals, balanceHistory, transactions };
 }
 
 async function replaceYearlyTotals(userId, rows) {
@@ -414,7 +305,7 @@ async function replaceFundNavEvents(rows) {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const { email, password, display_label } = req.body || {};
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     const row = await get('SELECT * FROM users WHERE email = ?', [String(email).toLowerCase()]);
     if (!row) return res.status(401).json({ error: 'Invalid credentials' });
@@ -660,6 +551,7 @@ app.delete('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
   }
 });
 
+
 app.get('/api/admin/fund-nav', auth, adminOnly, async (req, res) => {
   try {
     res.json(await loadFundNavBundle());
@@ -747,169 +639,6 @@ app.post('/api/admin/last-updated', auth, adminOnly, async (req, res) => {
   }
 });
 
-// Update 4-3-26: JS Date object -> yyyy-mm-dd string
-function ymd(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-// end
-
-// Update 4-3-26: functions for getting quarterly ranges, monthly ranges, yearly ranges
-function getQuarterRange(year, quarter) {
-  const q = Number(quarter);
-  const y = Number(year);
-  const startMonth = (q - 1) * 3;
-  const start = new Date(y, startMonth, 1);
-  const end = new Date(y, startMonth + 3, 0);
-  return { startDate: ymd(start), endDate: ymd(end) };
-}
-
-function computePrevQuarterRange(now) {
-  const currentQuarter = Math.floor(now.getMonth() / 3) + 1;
-  let prevQuarter = currentQuarter - 1;
-  let prevYear = now.getFullYear();
-  if (prevQuarter < 1) {
-    prevQuarter = 4;
-    prevYear -= 1;
-  }
-  const range = getQuarterRange(prevYear, prevQuarter);
-  return { ...range, quarter: prevQuarter, year: prevYear };
-}
-
-function computePrevMonthRange(now) {
-  const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-  const prevMonthStart = new Date(prevMonthEnd.getFullYear(), prevMonthEnd.getMonth(), 1);
-  return { startDate: ymd(prevMonthStart), endDate: ymd(prevMonthEnd) };
-}
-
-function computePrevYearRange(now) {
-  const prevYear = now.getFullYear() - 1;
-  return { startDate: ymd(new Date(prevYear, 0, 1)), endDate: ymd(new Date(prevYear, 11, 31)), year: prevYear };
-}
-// end
-
-
-// Update 4-3-26: Generate statements (monthly, quarterly, annual) for all or selected investors
-app.post('/api/admin/statements/generate', auth, adminOnly, async (req, res) => {
-  try {
-    const now = new Date();
-    const body = req.body || {};
-
-    const frequency = String(body.frequency || 'monthly').toLowerCase();
-    const customNameRaw = body.customName ?? body.name ?? '';
-    const customName = typeof customNameRaw === 'string' ? customNameRaw.trim() : '';
-
-    const startDateOverride = sanitizeDate(body.startDate);
-    const endDateOverride = sanitizeDate(body.endDate);
-
-    // Parse optional investor ID filter
-    const investorIdsRaw = Array.isArray(body.investorIds) ? body.investorIds : null;
-    const investorIds = investorIdsRaw
-      ? investorIdsRaw.map((id) => parseId(id)).filter((id) => id !== null)
-      : null; // null = generate for all
-
-    let startDate = null;
-    let endDate = null;
-    let quarter = null;
-    let year = null;
-
-    if (startDateOverride && endDateOverride) {
-      startDate = startDateOverride;
-      endDate = endDateOverride;
-    } else if (frequency === 'quarterly') {
-      const q = typeof body.quarter === 'string' || typeof body.quarter === 'number' ? parseInt(body.quarter, 10) : null;
-      const y = sanitizeYear(body.year);
-      if (q && q >= 1 && q <= 4 && y) {
-        quarter = q;
-        year = y;
-        const range = getQuarterRange(y, q);
-        startDate = range.startDate;
-        endDate = range.endDate;
-      } else {
-        const prev = computePrevQuarterRange(now);
-        startDate = prev.startDate;
-        endDate = prev.endDate;
-        quarter = prev.quarter;
-        year = prev.year;
-      }
-    } else if (frequency === 'annually' || frequency === 'annual' || frequency === 'yearly') {
-      const y = sanitizeYear(body.year);
-      if (y) {
-        year = y;
-        startDate = ymd(new Date(y, 0, 1));
-        endDate = ymd(new Date(y, 11, 31));
-      } else {
-        const prev = computePrevYearRange(now);
-        startDate = prev.startDate;
-        endDate = prev.endDate;
-        year = prev.year;
-      }
-    } else {
-      const prev = computePrevMonthRange(now);
-      startDate = prev.startDate;
-      endDate = prev.endDate;
-    }
-
-    if (!startDate || !endDate) throw new Error('Unable to compute statement period');
-
-    // statementTitle is always based on frequency — never the custom name
-    let statementTitle = '';
-    if (frequency === 'quarterly') {
-      statementTitle = quarter ? `Q${quarter} Quarterly Statement` : 'Quarterly Statement';
-    } else if (frequency === 'annually' || frequency === 'annual' || frequency === 'yearly') {
-      statementTitle = 'Annual Statement';
-    } else {
-      statementTitle = 'Monthly Statement';
-    }
-
-    // fileNamePrefix uses custom name if provided, otherwise derives from frequency
-    const fileNamePrefix = customName
-      ? customName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '')
-      : frequency === 'quarterly'
-        ? `Q${quarter || ''}_${year || ''}_Statement`
-        : (frequency === 'annually' || frequency === 'annual' || frequency === 'yearly')
-          ? `${year || 'Annual'}_Annual_Statement`
-          : `Monthly_Statement`;
-
-    const result = await generateMonthlyStatements({
-      startDate,
-      endDate,
-      statementTitle,
-      fileNamePrefix,
-      investorIds,
-      dataDir,
-      get,
-      all,
-      run
-    });
-
-    res.json({ ...result, frequency, statementTitle, fileNamePrefix, startDate, endDate });
-  } catch (e) {
-    res.status(500).json({ error: 'Statement generation failed', details: e?.message || String(e) });
-  }
-});
-
-// Backwards-compatible: monthly statements only
-app.post('/api/admin/statements/generate-monthly', auth, adminOnly, async (req, res) => {
-  try {
-    const now = new Date();
-    const prev = computePrevMonthRange(now);
-    const result = await generateMonthlyStatements({
-      startDate: prev.startDate,
-      endDate: prev.endDate,
-      statementTitle: 'Monthly Statement',
-      fileNamePrefix: 'Monthly_Statement',
-      dataDir,
-      get,
-      all,
-      run
-    });
-    res.json(result);
-  } catch (e) {
-    res.status(500).json({ error: 'Statement generation failed', details: e?.message || String(e) });
-  }
-});
-// end
-
 app.get('/api/public-stats', async (req, res) => {
   try {
     const row = await get("SELECT value FROM settings WHERE key = 'last_updated'");
@@ -932,61 +661,12 @@ app.get('/api/public-landing', async (req, res) => {
   }
 });
 
-
-// Update 4-3-26: Upload document for investor
-app.post('/api/admin/upload-doc', auth, adminOnly, upload.single('document'), async (req, res) => {
-  try {
-    const { userId } = req.body;
-    const file = req.file;
-    if (!file) return res.status(400).json({ error: 'No file uploaded' });
-    await run(
-      `INSERT INTO documents (user_id, file_name, file_path, file_type) VALUES (?, ?, ?, ?)`,
-      [userId, file.originalname, file.path, file.mimetype || 'application/pdf']
-    );
-    res.json({ success: true, message: 'Document uploaded successfully' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to save document record' });
-  }
-});
-// end
-
+app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');
   if (!fs.existsSync(indexPath)) return res.status(500).send('public/index.html not found');
   res.sendFile(indexPath);
 });
-
-// Update 4-3-26: Download a document — preserves original filename via Content-Disposition header
-app.get('/api/documents/:id', auth, async (req, res) => {
-  try {
-    const docId = req.params.id;
-    const userId = req.user.id;
-
-    const doc = await get(
-      `SELECT * FROM documents WHERE id = ?`,
-      [docId]
-    );
-
-    if (!doc) return res.status(404).json({ error: 'Document not found' });
-
-    if (req.user.role !== 'admin' && doc.user_id !== userId) {
-      return res.status(403).json({ error: 'Unauthorized' });
-    }
-
-    if (!fs.existsSync(doc.file_path)) {
-      return res.status(404).json({ error: 'File missing on server' });
-    }
-
-    // res.download sets Content-Disposition: attachment; filename="<doc.file_name>"
-    // which the client reads to preserve the correct filename
-    res.download(doc.file_path, doc.file_name);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Download failed' });
-  }
-});
-// end
 
 initDb().then(() => {
   app.listen(PORT, () => {
