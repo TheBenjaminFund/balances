@@ -6,8 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "seed": "node seed-dummy-data.js",
-    "seed:statements": "node seed-dummy-data.js --generate",
-    "postinstall": "npx puppeteer install"
+    "seed:statements": "node seed-dummy-data.js --generate"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
