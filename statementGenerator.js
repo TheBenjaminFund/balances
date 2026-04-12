@@ -281,10 +281,7 @@ async function generateMonthlyStatements({
     : allInvestors;
 
   // Launch once for all users.
-  const browser = await puppeteer.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    ...puppeteerLaunchOptions
-  });
+  const browser = await puppeteer.launch({ args: ['--no-sandbox','--disable-setuid-sandbox'], headless: 'new' });
   const page = await browser.newPage();
 
   let generated = 0;
