@@ -1,3 +1,27 @@
+
+async function resolveChromiumExecutablePath() {
+  const explicitPaths = [
+    process.env.CHROME_PATH,
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable'
+  ];
+
+  for (const p of explicitPaths) {
+    if (!p) continue;
+    try {
+      if (fs.existsSync(p)) return p;
+    } catch (_) {}
+  }
+
+  try {
+    const bundledPath = await chromium.executablePath();
+    if (bundledPath) return bundledPath;
+  } catch (_) {}
+
+  throw new Error('No Chromium executable found from system paths or @sparticuz/chromium');
+}
 // Update 4-3-26: New function for automatically generating monthly statements for all investors
 // Generates a PDF statement for each investor for the previous calendar month (can change the date range if needed)
 // Uses Puppeteer to render the HTML to a PDF
@@ -6,6 +30,7 @@
 import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -281,15 +306,20 @@ async function generateMonthlyStatements({
     : allInvestors;
 
   // Launch once for all users.
-  const executablePath = resolveChromiumExecutablePath();
-  console.log('Using Chromium executable path:', executablePath);
+  const executablePath = await resolveChromiumExecutablePath();
+console.log('Using Chromium executable path:', executablePath);
 
-  const browser = await puppeteer.launch({
-    executablePath,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    headless: true,
-    ...puppeteerLaunchOptions
-  });
+const browser = await puppeteer.launch({
+  executablePath,
+  args: Array.from(new Set([
+    ...(chromium.args || []),
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage'
+  ])),
+  defaultViewport: chromium.defaultViewport || { width: 1280, height: 720 },
+  headless: true
+});
   const page = await browser.newPage();
 
   let generated = 0;
