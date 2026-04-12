@@ -173,7 +173,7 @@ async function api(path, opts = {}) {
     let message = 'Request failed';
     try {
       const data = await res.json();
-      message = data.details ? `${data.error || message}: ${data.details}` : (data.error || message);
+      message = data.error || message;
     } catch {}
     throw new Error(message);
   }
@@ -605,50 +605,41 @@ function renderNetDepositsSection(container, bundle) {
 
 
 // Update 4-3-26: Frontend 'Documents & Statements' section
-function renderDocumentsSection(parent, bundle, opts = {}) {
+function renderDocumentsSection(parent, bundle) {
   const section = document.createElement('div');
   section.className = 'card mt-2';
 
   const docs = bundle.documents || [];
-  const showDelete = !!opts.showDelete;
 
   let html = `<h3>Documents & Statements</h3>`;
   if (docs.length === 0) {
     html += `<p class="subtle">No documents available yet.</p>`;
   } else {
-    html += `<div class="table-wrap document-table-wrap desktop-only">
-      <table class="table document-table full-width">
+    html += `<div class="desktop-only">
+      <table class="full-width">
         <thead>
           <tr><th>Name</th><th>Date</th><th>Action</th></tr>
         </thead>
         <tbody>`;
-
+      
     let mobileHtml = `<div class="mobile-only mobile-document-list">`;
 
     docs.forEach(doc => {
       html += `<tr>
-        <td class="doc-name-cell" title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</td>
-        <td class="doc-date-cell">${formatDatePretty(doc.created_at)}</td>
-        <td class="doc-actions-cell">
-          <div class="doc-actions">
-            <button type="button" data-doc-id="${doc.id}" class="ghost-btn download-doc-btn">Download</button>
-            ${showDelete ? `<button type="button" data-doc-id="${doc.id}" class="danger-btn delete-doc-btn">Delete</button>` : ''}
-          </div>
-        </td>
+        <td>${escapeHtml(doc.file_name)}</td>
+        <td>${formatDatePretty(doc.created_at)}</td>
+        <td><button type="button" data-doc-id="${doc.id}" class="ghost-btn download-doc-btn">Download</button></td>
       </tr>`;
 
       mobileHtml += `
         <div class="mobile-doc-card">
           <div class="doc-info">
-            <strong title="${escapeHtml(doc.file_name)}">${escapeHtml(doc.file_name)}</strong>
+            <strong>${escapeHtml(doc.file_name)}</strong>
             <span class="subtle">${formatDatePretty(doc.created_at)}</span>
           </div>
-          <div class="doc-mobile-actions">
-            <button type="button" data-doc-id="${doc.id}" class="download-icon-btn download-doc-btn" aria-label="Download document">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-            </button>
-            ${showDelete ? `<button type="button" data-doc-id="${doc.id}" class="download-icon-btn danger-btn delete-doc-btn" aria-label="Delete document">Delete</button>` : ''}
-          </div>
+          <button type="button" data-doc-id="${doc.id}" class="download-icon-btn download-doc-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          </button>
         </div>`;
     });
     html += `</tbody></table></div>`;
@@ -661,20 +652,6 @@ function renderDocumentsSection(parent, bundle, opts = {}) {
     btn.addEventListener('click', () => {
       const id = btn.getAttribute('data-doc-id');
       if (id) downloadDocument(id);
-    });
-  });
-  section.querySelectorAll('button.delete-doc-btn[data-doc-id]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-doc-id');
-      if (!id) return;
-      if (!confirm('Delete this document? This cannot be undone.')) return;
-      try {
-        await deleteDocument(id);
-        toast('Document deleted.');
-        if (typeof opts.onDeleted === 'function') opts.onDeleted();
-      } catch (e) {
-        toast(e.message || 'Delete failed.', false);
-      }
     });
   });
   parent.appendChild(section);
@@ -702,7 +679,7 @@ function renderAdminDocumentsSection(parent, bundle, refreshDetail) {
   parent.appendChild(card);
 
   const mount = card.querySelector('#adminDocsMount');
-  renderDocumentsSection(mount, bundle, { showDelete: true, onDeleted: refreshDetail });
+  renderDocumentsSection(mount, bundle);
 
   const fileEl = card.querySelector('#docFile');
   const catEl = card.querySelector('#docCategory');
@@ -767,21 +744,6 @@ async function downloadDocument(docId) {
   }
 }
 // end
-
-async function deleteDocument(docId) {
-  const response = await fetch(`/api/documents/${docId}`, {
-    method: 'DELETE',
-    headers: { 'Authorization': `Bearer ${state.token}` }
-  });
-
-  let payload = null;
-  try { payload = await response.json(); } catch {}
-  if (!response.ok) {
-    throw new Error(payload?.details ? `${payload?.error || 'Delete failed'}: ${payload.details}` : (payload?.error || 'Delete failed'));
-  }
-  return payload || { success: true };
-}
-
 
 
 function renderTransactionsSection(container, bundle) {
