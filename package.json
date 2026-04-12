@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "seed": "node seed-dummy-data.js",
-    "seed:statements": "node seed-dummy-data.js --generate"
+    "seed:statements": "node seed-dummy-data.js --generate",
+    "postinstall": "npx puppeteer browsers install chrome"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
