@@ -2,7 +2,9 @@
 // Generates a PDF statement for each investor for the previous calendar month (can change the date range if needed)
 // Uses Puppeteer to render the HTML to a PDF
 // Uses the data from the database to generate the statements
-
+function resolveChromiumExecutablePath() {
+  return process.env.CHROME_PATH || '/usr/bin/chromium';
+}
 import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
