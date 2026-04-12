@@ -33,6 +33,14 @@ import puppeteer from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import { fileURLToPath } from 'url';
 
+function sanitizeFileStem(name) {
+  return String(name)
+    .replace(/[^a-zA-Z0-9-_ ]/g, '')
+    .replace(/\s+/g, '_')
+    .substring(0, 50);
+}
+
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 // Embed logo as a data URI so Puppeteer can render it without relying on a web server.
