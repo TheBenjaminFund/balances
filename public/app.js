@@ -6,6 +6,15 @@ const fmtMoney = (cents) => {
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(Number(cents) / 100);
 };
 const fmtPct = (n) => (n === null || n === undefined || Number.isNaN(Number(n)) ? '—' : `${Number(n).toFixed(2)}%`);
+const fmtAxisMoney = (cents, compact = false) => {
+  if (cents === null || cents === undefined || Number.isNaN(Number(cents))) return '—';
+  const dollars = Number(cents) / 100;
+  if (!compact) return fmtMoney(cents);
+  const abs = Math.abs(dollars);
+  if (abs >= 1000000) return `$${(dollars / 1000000).toFixed(abs >= 10000000 ? 0 : 1)}M`;
+  if (abs >= 1000) return `$${(dollars / 1000).toFixed(abs >= 100000 ? 0 : 1)}K`;
+  return fmtMoney(cents);
+};
 const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const toUsdInputCents = (v) => {
   if (v === null || v === undefined || v === '') return null;
@@ -124,6 +133,37 @@ function toast(msg, ok = true) {
   setTimeout(() => el.remove(), ok ? 1800 : 2600);
 }
 
+// Update 4-3-26: Admin file uploading
+async function handleFileUpload(userId, fileInput) {
+  const file = fileInput.files[0];
+  if (!file) return alert('Please select a file');
+
+  const formData = new FormData();
+  formData.append('document', file);
+  formData.append('userId', userId);
+  formData.append('category', 'Statement');
+
+  try {
+    const res = await fetch('/api/admin/upload-doc', {
+      method: 'POST',
+      headers: { 'Authorization' : `Bearer ${state.token}` },
+      body: formData
+    });
+    const data = await res.json();
+    if (data.success) {
+      alert('Upload successful!');
+      fileInput.value = '';
+    } else {
+      alert('Upload failed: ' + data.error);
+    }
+  } catch (err) {
+    console.error(err);
+    alert('An error occured during upload.');
+  }
+}
+// end
+
+
 async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -143,9 +183,12 @@ async function api(path, opts = {}) {
 
 function buildChartSvg(points, opts = {}) {
   if (!points || !points.length) return '<div class="empty-state">No data entered yet.</div>';
-  const width = opts.width || 860;
-  const height = opts.height || 300;
-  const pad = { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
+  const mobileMode = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 720px)').matches;
+  const width = opts.width || (mobileMode ? (opts.type === 'bar' ? 430 : 440) : 860);
+  const height = opts.height || (mobileMode ? (opts.type === 'bar' ? 250 : 320) : 300);
+  const pad = mobileMode
+    ? { left: opts.type === 'bar' ? 68 : 72, right: opts.type === 'bar' ? 18 : 16, top: 14, bottom: 34 }
+    : { left: opts.type === 'bar' ? 74 : 56, right: opts.type === 'bar' ? 28 : 18, top: 14, bottom: 38 };
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
   const rawMinY = Math.min(...ys);
@@ -197,13 +240,13 @@ function buildChartSvg(points, opts = {}) {
   const plotH = height - pad.top - pad.bottom;
   const yScale = (y) => pad.top + (1 - ((y - minY) / (maxY - minY))) * plotH;
   const zeroY = minY <= 0 && maxY >= 0 ? yScale(0) : null;
-  const ticks = 4;
+  const ticks = mobileMode ? 3 : 4;
   const yTickMarkup = Array.from({ length: ticks + 1 }, (_, i) => {
     const v = minY + ((maxY - minY) * i) / ticks;
     const y = yScale(v);
     return `
       <line x1="${pad.left}" y1="${y}" x2="${width - pad.right}" y2="${y}" class="chart-grid" />
-      <text x="${pad.left - 10}" y="${y + 4}" text-anchor="end" class="chart-label">${escapeHtml(fmtMoney(Math.round(v * 100)))}</text>`;
+      <text x="${pad.left - 8}" y="${y + 4}" text-anchor="end" class="chart-y-label">${escapeHtml(fmtAxisMoney(Math.round(v * 100), mobileMode))}</text>`;
   }).join('');
 
   const tooltipMarkup = (x, y, lines = []) => {
@@ -269,9 +312,16 @@ function buildChartSvg(points, opts = {}) {
   const xScale = (x) => pad.left + ((x - lineMinX) / (lineMaxX - lineMinX)) * plotW;
   const line = linePoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${xScale(p.x).toFixed(1)} ${yScale(p.y).toFixed(1)}`).join(' ');
   const area = `${line} L ${xScale(linePoints[linePoints.length - 1].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} L ${xScale(linePoints[0].x).toFixed(1)} ${(pad.top + plotH).toFixed(1)} Z`;
-  const xLabels = [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]]
+  const xLabelPoints = mobileMode
+    ? [linePoints[0], linePoints[linePoints.length - 1]]
+    : [linePoints[0], linePoints[Math.floor((linePoints.length - 1) / 2)], linePoints[linePoints.length - 1]];
+  const xLabels = xLabelPoints
     .filter((v, i, arr) => arr.findIndex((x) => x.label === v.label) === i)
-    .map((p) => `<text x="${xScale(p.x)}" y="${height - 10}" text-anchor="middle" class="chart-label">${escapeHtml(p.label)}</text>`).join('');
+    .map((p, idx, arr) => {
+      const anchor = mobileMode ? (idx === 0 ? 'start' : 'end') : 'middle';
+      const x = mobileMode ? (idx === 0 ? pad.left : width - pad.right) : xScale(p.x);
+      return `<text x="${x}" y="${height - 10}" text-anchor="${anchor}" class="chart-x-label">${escapeHtml(p.label)}</text>`;
+    }).join('');
 
   return `<svg viewBox="0 0 ${width} ${height}" class="chart-svg" role="img" aria-label="Chart">
     ${yTickMarkup}
@@ -332,7 +382,7 @@ function renderLastUpdatedSection(parent) {
 
 function renderPublicNavSection(container, landing) {
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card public-nav-card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -404,17 +454,16 @@ function renderLogin() {
   shell.className = 'public-shell';
   shell.innerHTML = `
     <div class="public-left">
-      <div class="card hero-card">
+      <div class="card hero-card public-hero-card">
         <div class="eyebrow">The Benjamin Fund</div>
         <h1>Investor Experience</h1>
         <div class="subtle hero-copy">A secure dashboard for investor balances, transactions, and account reporting.</div>
-        <div class="stats three compact-stats hero-stats" id="publicHeroStats">
+        <div class="stats three compact-stats hero-stats mobile-hero-stats" id="publicHeroStats">
           <div class="stat"><div class="label">Current NAV / Share</div><div class="value">—</div></div>
           <div class="stat"><div class="label">Last Updated</div><div class="value small-value">—</div></div>
           <div class="stat"><div class="label">Portal Access</div><div class="value small-value">Secure Login</div></div>
         </div>
       </div>
-      <div id="publicNavMount"></div>
     </div>
     <div class="public-right">
       <div class="card login-card public-login-card">
@@ -426,7 +475,8 @@ function renderLogin() {
           <button id="login">Login</button>
         </div>
       </div>
-    </div>`;
+    </div>
+    <div id="publicNavMount" class="public-nav-mount"></div>`;
   app.appendChild(shell);
   shell.querySelector('#login').onclick = async () => {
     const email = shell.querySelector('#email').value.trim();
@@ -462,10 +512,10 @@ function renderSummaryCards(container, bundle) {
   const pct = dep > 0 ? (change / dep) * 100 : null;
   const tone = pct === null ? 'neutral' : change >= 0 ? 'pos' : 'neg';
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card summary-card';
   card.innerHTML = `
     <h2>Account Summary</h2>
-    <div class="stats">
+    <div class="stats summary-stats">
       <div class="stat"><div class="label">Total Invested</div><div class="value">${fmtMoney(dep)}</div></div>
       <div class="stat"><div class="label">Current NAV</div><div class="value">${fmtMoney(bal)}</div></div>
       <div class="stat perf-big"><div class="label">Return</div><div class="value"><span class="${tone}">${pct === null ? '—' : `${fmtPct(pct)} (${fmtMoney(change)})`}</span></div></div>
@@ -475,7 +525,7 @@ function renderSummaryCards(container, bundle) {
 
 function renderBalanceSection(container, bundle) {
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card balance-section-card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -529,13 +579,7 @@ function renderBalanceSection(container, bundle) {
       }
       return { x: r.ts, y: r.balance_cents / 100, label: r.as_of_date, marker, tooltipLines: lines };
     });
-    chartEl.innerHTML = buildChartSvg(
-      plotted,
-      {
-        smartScale: true,
-        pointTooltip: (p) => p.tooltipLines
-      }
-    );
+    chartEl.innerHTML = buildChartSvg(plotted, { smartScale: true, pointTooltip: (p) => p.tooltipLines });
   }
 
   card.querySelectorAll('.toggle').forEach((btn) => {
@@ -551,7 +595,7 @@ function renderBalanceSection(container, bundle) {
 function renderNetDepositsSection(container, bundle) {
   const rows = (bundle.yearlyTotals || []).slice().sort((a, b) => a.year - b.year);
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card net-deposits-card';
   card.innerHTML = `
     <h2>Net Deposits by Year</h2>
     <div class="subtle">Negative values are displayed below zero.</div>
@@ -559,10 +603,153 @@ function renderNetDepositsSection(container, bundle) {
   container.appendChild(card);
 }
 
+
+// Update 4-3-26: Frontend 'Documents & Statements' section
+function renderDocumentsSection(parent, bundle) {
+  const section = document.createElement('div');
+  section.className = 'card mt-2';
+
+  const docs = bundle.documents || [];
+
+  let html = `<h3>Documents & Statements</h3>`;
+  if (docs.length === 0) {
+    html += `<p class="subtle">No documents available yet.</p>`;
+  } else {
+    html += `<div class="desktop-only">
+      <table class="full-width">
+        <thead>
+          <tr><th>Name</th><th>Date</th><th>Action</th></tr>
+        </thead>
+        <tbody>`;
+      
+    let mobileHtml = `<div class="mobile-only mobile-document-list">`;
+
+    docs.forEach(doc => {
+      html += `<tr>
+        <td>${escapeHtml(doc.file_name)}</td>
+        <td>${formatDatePretty(doc.created_at)}</td>
+        <td><button type="button" data-doc-id="${doc.id}" class="ghost-btn download-doc-btn">Download</button></td>
+      </tr>`;
+
+      mobileHtml += `
+        <div class="mobile-doc-card">
+          <div class="doc-info">
+            <strong>${escapeHtml(doc.file_name)}</strong>
+            <span class="subtle">${formatDatePretty(doc.created_at)}</span>
+          </div>
+          <button type="button" data-doc-id="${doc.id}" class="download-icon-btn download-doc-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          </button>
+        </div>`;
+    });
+    html += `</tbody></table></div>`;
+    mobileHtml += `</div>`;
+    html += mobileHtml;
+  }
+
+  section.innerHTML = html;
+  section.querySelectorAll('button.download-doc-btn[data-doc-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-doc-id');
+      if (id) downloadDocument(id);
+    });
+  });
+  parent.appendChild(section);
+}
+// end
+
+// Update 4-3-26: Frontend ADMIN 'Documents' Section
+function renderAdminDocumentsSection(parent, bundle, refreshDetail) {
+  const card = document.createElement('div');
+  card.className = 'card inner-card';
+  card.innerHTML = `
+    <h3>Documents</h3>
+    <div class="subtle">Upload PDF statements for this investor. Uploaded files appear in the investor dashboard and can be downloaded below.</div>
+    <div class="row wrap-row top-gap">
+      <select id="docCategory">
+        <option value="Statement">Statement</option>
+        <option value="Tax">Tax</option>
+        <option value="Letter">Letter</option>
+        <option value="Other">Other</option>
+      </select>
+      <input id="docFile" type="file" accept="application/pdf,.pdf" />
+      <button id="uploadDocBtn">Upload PDF</button>
+    </div>
+    <div id="adminDocsMount" class="top-gap"></div>`;
+  parent.appendChild(card);
+
+  const mount = card.querySelector('#adminDocsMount');
+  renderDocumentsSection(mount, bundle);
+
+  const fileEl = card.querySelector('#docFile');
+  const catEl = card.querySelector('#docCategory');
+  const uploadBtn = card.querySelector('#uploadDocBtn');
+  uploadBtn.onclick = async () => {
+    const file = fileEl.files && fileEl.files[0] ? fileEl.files[0] : null;
+    if (!file) return toast('Choose a PDF to upload.', false);
+    if (file.type && file.type !== 'application/pdf') return toast('Only PDF files are allowed.', false);
+    try {
+      const fd = new FormData();
+      fd.append('userId', String(bundle.user.id));
+      fd.append('category', String(catEl.value || 'Statement'));
+      fd.append('document', file, file.name);
+      const res = await fetch('/api/admin/upload-doc', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${state.token}` },
+        body: fd
+      });
+      const text = await res.text();
+      let payload = null;
+      try { payload = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) throw new Error(payload?.error || payload?.message || 'Upload failed');
+      toast('Document uploaded.');
+      fileEl.value = '';
+      refreshDetail();
+    } catch (e) {
+      toast(e.message || 'Upload failed.', false);
+    }
+  };
+}
+// end
+
+// Upload 4-3-26: Download a document — reads filename from Content-Disposition header
+async function downloadDocument(docId) {
+  try {
+    const response = await fetch(`/api/documents/${docId}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${state.token}` }
+    });
+
+    if (!response.ok) throw new Error('Download failed');
+
+    // Read the real filename from Content-Disposition header set by the server
+    const disposition = response.headers.get('Content-Disposition');
+    let fileName = `document_${docId}.pdf`; // fallback only
+    if (disposition) {
+      const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+      if (match) fileName = match[1].replace(/['"]/g, '');
+    }
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  } catch (err) {
+    alert('Could not download file: ' + err.message);
+  }
+}
+// end
+
+
 function renderTransactionsSection(container, bundle) {
   const allRows = (bundle.transactions || []).slice();
   const card = document.createElement('div');
-  card.className = 'card';
+  card.className = 'card transactions-card';
   card.innerHTML = `
     <div class="section-head">
       <div>
@@ -584,12 +771,13 @@ function renderTransactionsSection(container, bundle) {
         </select>
       </div>
     </div>
-    <div class="table-wrap">
-      <table class="table mono">
+    <div class="table-wrap transaction-table-wrap">
+      <table class="table mono transaction-table">
         <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>NAV / Share</th><th>Notes</th></tr></thead>
         <tbody id="txTableBody"></tbody>
       </table>
-    </div>`;
+    </div>
+    <div class="mobile-transaction-list" id="txMobileList"></div>`;
   container.appendChild(card);
   const yearSelect = card.querySelector('#txFilterYear');
   uniqueYears(allRows, 'tx_date').reverse().forEach((year) => {
@@ -612,14 +800,27 @@ function renderTransactionsSection(container, bundle) {
       if (sortKey === 'amount_asc') return Number(a.amount_cents || 0) - Number(b.amount_cents || 0) || String(b.tx_date).localeCompare(String(a.tx_date));
       return String(b.tx_date).localeCompare(String(a.tx_date)) || Number(b.amount_cents || 0) - Number(a.amount_cents || 0);
     });
+    const mobileList = card.querySelector('#txMobileList');
     tbody.innerHTML = rows.length ? rows.map((tx) => `
       <tr>
-        <td>${escapeHtml(tx.tx_date)}</td>
-        <td>${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
-        <td>${fmtMoney(tx.amount_cents)}</td>
-        <td>${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
-        <td>${escapeHtml(tx.notes || '')}</td>
+        <td data-label="Date">${escapeHtml(tx.tx_date)}</td>
+        <td data-label="Type">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
+        <td data-label="Amount">${fmtMoney(tx.amount_cents)}</td>
+        <td data-label="NAV / Share">${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
+        <td data-label="Notes">${escapeHtml(tx.notes || '')}</td>
       </tr>`).join('') : '<tr><td colspan="5">No transactions match the selected filters.</td></tr>';
+    mobileList.innerHTML = rows.length ? rows.map((tx) => `
+      <article class="mobile-tx-card compact ${tx.tx_type === 'redemption' ? 'tx-redemption' : 'tx-deposit'}">
+        <div class="mobile-tx-row-top">
+          <span class="mobile-tx-date">${escapeHtml(tx.tx_date)}</span>
+          <span class="mobile-tx-pill">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</span>
+          <strong class="mobile-tx-amount">${fmtMoney(tx.amount_cents)}</strong>
+        </div>
+        <div class="mobile-tx-row-bottom">
+          <span class="mobile-tx-nav">NAV ${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</span>
+          <span class="mobile-tx-note">${escapeHtml(tx.notes || '—')}</span>
+        </div>
+      </article>`).join('') : '<div class="empty-state">No transactions match the selected filters.</div>';
   }
 
   card.querySelectorAll('select').forEach((el) => { el.onchange = draw; });
@@ -661,6 +862,125 @@ function makeTableRow(cells, rowClass = '') {
   return tr;
 }
 
+// Update 4-3-26: Mobile Components
+// Frontend mobile nav bar
+function renderMobileNav(isAdmin = false) {
+  document.querySelector('.mobile-nav')?.remove();
+ 
+  const nav = document.createElement('nav');
+  nav.className = 'mobile-nav';
+  nav.setAttribute('aria-label', 'Page sections');
+ 
+  const items = [
+    {
+      id: 'summary',
+      label: 'Summary',
+      icon: `<svg class="mobile-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>`
+    },
+    {
+      id: 'transactions',
+      label: 'Activity',
+      icon: `<svg class="mobile-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`
+    },
+    {
+      id: 'documents',
+      label: 'Docs',
+      icon: `<svg class="mobile-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`
+    },
+    {
+      id: 'account',
+      label: 'Account',
+      icon: `<svg class="mobile-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`
+    },
+  ];
+ 
+  if (isAdmin) {
+    items.push({
+      id: 'admin',
+      label: 'Admin',
+      icon: `<svg class="mobile-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/><polyline points="16 11 17.5 13 21 10"/></svg>`
+    });
+  }
+ 
+  function activateSection(id) {
+    nav.querySelectorAll('.mobile-nav__item').forEach(b =>
+      b.classList.toggle('active', b.dataset.section === id)
+    );
+    document.querySelectorAll('.nav-section').forEach(s =>
+      s.classList.toggle('nav-section--active', s.dataset.navId === id)
+    );
+  }
+ 
+  items.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'mobile-nav__item';
+    btn.dataset.section = item.id;
+    btn.setAttribute('aria-label', item.label);
+    btn.innerHTML = `${item.icon}<span class="mobile-nav__label">${item.label}</span>`;
+    btn.addEventListener('click', () => activateSection(item.id));
+    nav.appendChild(btn);
+  });
+ 
+  document.body.appendChild(nav);
+  activateSection('summary');
+}
+
+function syncAdminMobileRow(tr, mobileContainer, fields) {
+  const card = document.createElement('div');
+  card.className = 'admin-row-card';
+ 
+  const fieldsWrap = document.createElement('div');
+  fieldsWrap.className = 'admin-row-card__fields';
+ 
+  fields.forEach(f => {
+    const fieldEl = tr.querySelector(f.querySelector);
+    if (!fieldEl) return;
+ 
+    const wrap = document.createElement('div');
+    wrap.className = 'admin-row-card__field' + (f.fullWidth ? ' full-width' : '');
+ 
+    const lbl = document.createElement('span');
+    lbl.className = 'admin-row-card__label';
+    lbl.textContent = f.label;
+ 
+    const mirror = fieldEl.cloneNode(true);
+    mirror.style.cssText = '';
+ 
+    fieldEl.addEventListener('input', () => { mirror.value = fieldEl.value; });
+    fieldEl.addEventListener('change', () => { mirror.value = fieldEl.value; });
+    mirror.addEventListener('input', () => { fieldEl.value = mirror.value; });
+    mirror.addEventListener('change', () => { fieldEl.value = mirror.value; });
+ 
+    wrap.appendChild(lbl);
+    wrap.appendChild(mirror);
+    fieldsWrap.appendChild(wrap);
+  });
+ 
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'ghost-btn admin-row-card__remove';
+  removeBtn.textContent = 'Remove';
+  removeBtn.addEventListener('click', () => {
+    tr.remove();
+    card.remove();
+  });
+ 
+  const origRemove = tr.querySelector('.delete-row');
+  if (origRemove) {
+    origRemove.onclick = () => {
+      tr.remove();
+      card.remove();
+    };
+  }
+ 
+  card.appendChild(fieldsWrap);
+  card.appendChild(removeBtn);
+  mobileContainer.appendChild(card);
+ 
+  return card;
+}
+// end
+
+// Update 4-3-26: Added 'Statements' card to Admin Portal
 function renderAdmin(container) {
   const card = document.createElement('div');
   card.className = 'card';
@@ -676,6 +996,14 @@ function renderAdmin(container) {
       state.adminSelectedUserId = firstUser?.id || null;
     }
     if (selectId) state.adminSelectedUserId = selectId;
+
+    // NEW: Build year options for statement selectors
+    const now = new Date();
+    const yearOptions = [...Array(5)].map((_, i) => {
+      const y = now.getFullYear() - i;
+      return `<option value="${y}">${y}</option>`;
+    }).join('');
+
     sidebar.innerHTML = `
       <div class="card inner-card">
         <h3>Create User</h3>
@@ -704,6 +1032,77 @@ function renderAdmin(container) {
           <input id="lastUpdated" placeholder="Last Updated (YYYY-MM-DD)" />
           <button id="saveLastUpdated">Save</button>
           <button id="downloadBackup" class="ghost-btn">Download Backup</button>
+        </div>
+      </div>
+      <div class="card inner-card" id="statementsCard">
+        <h3>Statements</h3>
+        <div class="stack-sm">
+          <select id="statementFrequency">
+            <option value="monthly" selected>Monthly</option>
+            <option value="quarterly">Quarterly</option>
+            <option value="annually">Annually</option>
+          </select>
+
+          <div id="monthlyOptions">
+            <div class="row wrap-row">
+              <select id="statementMonth">
+                <option value="1">January</option><option value="2">February</option>
+                <option value="3">March</option><option value="4">April</option>
+                <option value="5">May</option><option value="6">June</option>
+                <option value="7">July</option><option value="8">August</option>
+                <option value="9">September</option><option value="10">October</option>
+                <option value="11">November</option><option value="12">December</option>
+              </select>
+              <select id="statementMonthYear">${yearOptions}</select>
+            </div>
+          </div>
+
+          <div id="quarterlyOptions" style="display:none;">
+            <div class="row wrap-row">
+              <select id="statementQuarter">
+                <option value="1">Q1 (Jan–Mar)</option>
+                <option value="2">Q2 (Apr–Jun)</option>
+                <option value="3">Q3 (Jul–Sep)</option>
+                <option value="4">Q4 (Oct–Dec)</option>
+              </select>
+              <select id="statementQuarterYear">${yearOptions}</select>
+            </div>
+          </div>
+
+          <div id="annualOptions" style="display:none;">
+            <select id="statementAnnualYear">${yearOptions}</select>
+          </div>
+
+          <div>
+            <label class="subtle" style="display:block; margin-bottom:6px;">Generate for</label>
+            <select id="investorScope">
+              <option value="all">All Investors</option>
+              <option value="one">One Investor</option>
+              <option value="some">Select Investors</option>
+            </select>
+          </div>
+
+          <div id="scopeOne" style="display:none;">
+            <select id="scopeOneSelect">
+              <option value="">— Choose investor —</option>
+              ${sortAdminUsers(users, state.adminSort).filter(u => u.role !== 'admin').map(u =>
+                `<option value="${u.id}">${escapeHtml(getInvestorLabel(u))} (${escapeHtml(u.email)})</option>`
+              ).join('')}
+            </select>
+          </div>
+
+          <div id="scopeSome" style="display:none;">
+            <div class="subtle" style="margin-bottom:6px;">Hold Ctrl / Cmd to select multiple.</div>
+            <select id="scopeSomeSelect" multiple style="height:120px; width:100%;">
+              ${sortAdminUsers(users, state.adminSort).filter(u => u.role !== 'admin').map(u =>
+                `<option value="${u.id}">${escapeHtml(getInvestorLabel(u))} (${escapeHtml(u.email)})</option>`
+              ).join('')}
+            </select>
+          </div>
+
+          <input id="customStatementName" type="text" placeholder="Custom file name (optional)" />
+          <div class="subtle">Leave blank to use the default name (e.g. Monthly_Statement.pdf)</div>
+          <button id="generateStatements">Generate Statements</button>
         </div>
       </div>`;
 
@@ -762,6 +1161,96 @@ function renderAdmin(container) {
         setTimeout(() => URL.revokeObjectURL(url), 1500);
       } catch (e) {
         toast(e.message || 'Backup failed.', false);
+      }
+    };
+
+    // Update 4-3-26: Statement Generation
+    // Statements section wiring 
+    const freqEl = sidebar.querySelector('#statementFrequency');
+    const monthlyOpts = sidebar.querySelector('#monthlyOptions');
+    const quarterlyOpts = sidebar.querySelector('#quarterlyOptions');
+    const annualOpts = sidebar.querySelector('#annualOptions');
+    const scopeEl = sidebar.querySelector('#investorScope');
+    const scopeOneEl = sidebar.querySelector('#scopeOne');
+    const scopeSomeEl = sidebar.querySelector('#scopeSome');
+
+    freqEl.onchange = () => {
+      monthlyOpts.style.display = freqEl.value === 'monthly' ? '' : 'none';
+      quarterlyOpts.style.display = freqEl.value === 'quarterly' ? '' : 'none';
+      annualOpts.style.display = freqEl.value === 'annually' ? '' : 'none';
+    };
+
+    scopeEl.onchange = () => {
+      scopeOneEl.style.display = scopeEl.value === 'one' ? '' : 'none';
+      scopeSomeEl.style.display = scopeEl.value === 'some' ? '' : 'none';
+    };
+
+    // Pre-select previous month
+    const prevMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+    const prevMonthYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    sidebar.querySelector('#statementMonth').value = String(prevMonth);
+    sidebar.querySelector('#statementMonthYear').value = String(prevMonthYear);
+
+    sidebar.querySelector('#generateStatements').onclick = async () => {
+      const freq = freqEl.value;
+      const customName = sidebar.querySelector('#customStatementName')?.value?.trim() || '';
+      const scope = scopeEl.value;
+
+      // Resolve investor IDs
+      let investorIds = null; // null = all
+      if (scope === 'one') {
+        const val = sidebar.querySelector('#scopeOneSelect').value;
+        if (!val) return toast('Please select an investor.', false);
+        investorIds = [Number(val)];
+      } else if (scope === 'some') {
+        const selected = [...sidebar.querySelector('#scopeSomeSelect').selectedOptions].map(o => Number(o.value));
+        if (!selected.length) return toast('Please select at least one investor.', false);
+        investorIds = selected;
+      }
+
+      let extraPayload = {};
+      if (freq === 'monthly') {
+        const month = sidebar.querySelector('#statementMonth').value;
+        const year = sidebar.querySelector('#statementMonthYear').value;
+        const paddedMonth = String(month).padStart(2, '0');
+        const daysInMonth = new Date(Number(year), Number(month), 0).getDate();
+        extraPayload = {
+          startDate: `${year}-${paddedMonth}-01`,
+          endDate: `${year}-${paddedMonth}-${daysInMonth}`
+        };
+      } else if (freq === 'quarterly') {
+        extraPayload = {
+          quarter: sidebar.querySelector('#statementQuarter').value,
+          year: sidebar.querySelector('#statementQuarterYear').value
+        };
+      } else if (freq === 'annually') {
+        extraPayload = {
+          year: sidebar.querySelector('#statementAnnualYear').value
+        };
+      }
+
+      const scopeLabel = scope === 'all' ? 'all investors'
+        : scope === 'one' ? '1 investor'
+        : `${investorIds.length} investor${investorIds.length === 1 ? '' : 's'}`;
+
+      if (!confirm(`Generate ${freq} PDF statements for ${scopeLabel}?`)) return;
+
+      try {
+        const result = await api('/api/admin/statements/generate', {
+          method: 'POST',
+          body: JSON.stringify({
+            frequency: freq,
+            customName: customName || undefined,
+            investorIds: investorIds || undefined,
+            ...extraPayload
+          })
+        });
+        const base = `Statements generated: ${result.generated}, skipped: ${result.skipped}.`;
+        const maybeErrors = result.errors?.length ? ` Errors: ${result.errors.length}.` : '';
+        toast(base + maybeErrors);
+        if (result.errors?.length) console.error(result.errors);
+      } catch (e) {
+        toast(e.message || 'Statement generation failed.', false);
       }
     };
   }
@@ -838,6 +1327,7 @@ function renderAdmin(container) {
       renderAdminYearlyTotalsSection(detail, bundle);
       renderAdminBalancesSection(detail, bundle);
       renderAdminTransactionsSection(detail, bundle);
+      renderAdminDocumentsSection(detail, bundle, () => loadDetail(id)); // new 'Statements' Section in Admin Portal
       renderAdminFundNavSection(detail);
     } catch (e) {
       detail.innerHTML = `<div class="card inner-card"><div class="subtle">${escapeHtml(e.message || 'Failed to load investor.')}</div></div>`;
@@ -910,6 +1400,7 @@ function renderAdmin(container) {
     const defaultYear = state.adminSelectedBalanceYear && years.includes(Number(state.adminSelectedBalanceYear))
       ? String(state.adminSelectedBalanceYear)
       : String(years[years.length - 1] || todayYear());
+   
     sec.innerHTML = `
       <div class="section-head">
         <div>
@@ -918,18 +1409,24 @@ function renderAdmin(container) {
         </div>
         <select id="balanceYearSelect">${years.map((y) => `<option value="${y}" ${String(y) === defaultYear ? 'selected' : ''}>${y}</option>`).join('')}</select>
       </div>
-      <div class="table-wrap"><table class="table mono"><thead><tr><th>Date</th><th>Balance (USD)</th><th></th></tr></thead><tbody id="balanceBody"></tbody></table></div>
+      <div class="admin-balance-table-wrap table-wrap">
+        <table class="table mono"><thead><tr><th>Date</th><th>Balance (USD)</th><th></th></tr></thead><tbody id="balanceBody"></tbody></table>
+      </div>
+      <div class="admin-mobile-rows" id="balanceMobileRows"></div>
       <div class="subtle top-gap" id="balanceValidationHint">Each row must have a unique date inside the selected year.</div>
-      <div class="row wrap-row top-gap"><button id="addBalanceRow">Add Balance Row</button><button id="addTenBalanceRows" class="ghost-btn">Add 10 Rows</button><button id="saveBalanceRows">Save Selected Year</button></div>
-      <details class="bulk-box top-gap"><summary>Bulk Paste Weekly Balances</summary><div class="subtle top-gap">Paste two columns from a spreadsheet: date and balance. Tabs, commas, or multiple spaces all work.</div><textarea id="balanceBulkPaste" rows="7" placeholder="2025-01-10    10250
-2025-01-24    10410"></textarea><div class="row wrap-row top-gap"><button id="applyBalancePaste" class="ghost-btn">Append Parsed Rows</button></div></details>`;
+      <div class="row wrap-row top-gap">
+        <button id="addBalanceRow">Add Balance Row</button>
+        <button id="addTenBalanceRows" class="ghost-btn">Add 10 Rows</button>
+        <button id="saveBalanceRows">Save Selected Year</button>
+      </div>
+      <details class="bulk-box top-gap"><summary>Bulk Paste Weekly Balances</summary><div class="subtle top-gap">Paste two columns from a spreadsheet: date and balance. Tabs, commas, or multiple spaces all work.</div><textarea id="balanceBulkPaste" rows="7" placeholder="2025-01-10    10250&#10;2025-01-24    10410"></textarea><div class="row wrap-row top-gap"><button id="applyBalancePaste" class="ghost-btn">Append Parsed Rows</button></div></details>`;
+   
     parent.appendChild(sec);
+   
     const tbody = sec.querySelector('#balanceBody');
+    const mobileRows = sec.querySelector('#balanceMobileRows');
     const yearSelect = sec.querySelector('#balanceYearSelect');
-    const addButton = sec.querySelector('#addBalanceRow');
-    const addTenButton = sec.querySelector('#addTenBalanceRows');
-    const saveButton = sec.querySelector('#saveBalanceRows');
-
+   
     const inferNextDate = () => {
       const dates = [...tbody.querySelectorAll('.date-input')].map((input) => input.value).filter(Boolean);
       if (!dates.length) return '';
@@ -944,36 +1441,45 @@ function renderAdmin(container) {
       }
       return addDaysIso(last, 7);
     };
-
+   
     const addRow = (date = '', value = '') => {
       const tr = makeTableRow([
         `<td><input class="date-input" type="date" value="${escapeHtml(date)}" /></td>`,
         `<td><input class="money-input" value="${escapeHtml(value)}" placeholder="0.00" /></td>`,
         `<td><button class="ghost-btn delete-row">Remove</button></td>`
       ]);
-      tr.querySelector('.delete-row').onclick = () => tr.remove();
       tbody.appendChild(tr);
+   
+      syncAdminMobileRow(tr, mobileRows, [
+        { label: 'Date', querySelector: '.date-input', fullWidth: false },
+        { label: 'Balance (USD)', querySelector: '.money-input', fullWidth: false }
+      ]);
     };
-
+   
     const drawYear = () => {
       state.adminSelectedBalanceYear = yearSelect.value;
       tbody.innerHTML = '';
+      mobileRows.innerHTML = '';
       const selected = yearSelect.value;
-      const rows = (bundle.balanceHistory || []).filter((r) => String(r.as_of_date).startsWith(selected)).sort((a, b) => a.as_of_date.localeCompare(b.as_of_date));
+      const rows = (bundle.balanceHistory || [])
+        .filter((r) => String(r.as_of_date).startsWith(selected))
+        .sort((a, b) => a.as_of_date.localeCompare(b.as_of_date));
       rows.forEach((r) => addRow(r.as_of_date, centsToInput(r.balance_cents)));
       if (!rows.length) addRow('', '');
     };
-
-    addButton.onclick = () => addRow(inferNextDate(), '');
-    addTenButton.onclick = () => {
+   
+    sec.querySelector('#addBalanceRow').onclick = () => addRow(inferNextDate(), '');
+    sec.querySelector('#addTenBalanceRows').onclick = () => {
       let nextDate = inferNextDate();
-      for (let i = 0; i < 10; i += 1) {
+      for (let i = 0; i < 10; i++) {
         addRow(nextDate, '');
         nextDate = nextDate ? addDaysIso(nextDate, 7) : '';
       }
     };
+   
     drawYear();
     yearSelect.onchange = drawYear;
+   
     sec.querySelector('#applyBalancePaste').onclick = () => {
       const raw = sec.querySelector('#balanceBulkPaste').value.trim();
       if (!raw) return toast('Paste some rows first.', false);
@@ -984,12 +1490,13 @@ function renderAdmin(container) {
         if (parts.length < 2) return;
         const [date, value] = parts;
         addRow(date, value.replace(/[$,]/g, ''));
-        added += 1;
+        added++;
       });
       toast(added ? `Added ${added} row${added === 1 ? '' : 's'} from paste.` : 'No valid rows were detected.', !!added);
       if (added) sec.querySelector('#balanceBulkPaste').value = '';
     };
-    saveButton.onclick = async () => {
+   
+    sec.querySelector('#saveBalanceRows').onclick = async () => {
       const selectedYear = yearSelect.value;
       state.adminSelectedBalanceYear = selectedYear;
       const errors = [];
@@ -1000,18 +1507,9 @@ function renderAdmin(container) {
         const valueRaw = tr.querySelector('.money-input').value;
         const cents = toUsdInputCents(valueRaw);
         if (!date && (valueRaw === '' || valueRaw === null)) return;
-        if (!date || cents === null) {
-          errors.push(`Row ${idx + 1} is missing a valid date or balance.`);
-          return;
-        }
-        if (!date.startsWith(selectedYear)) {
-          errors.push(`Row ${idx + 1} must use a ${selectedYear} date.`);
-          return;
-        }
-        if (seen.has(date)) {
-          errors.push(`Row ${idx + 1} repeats ${date}.`);
-          return;
-        }
+        if (!date || cents === null) { errors.push(`Row ${idx + 1} is missing a valid date or balance.`); return; }
+        if (!date.startsWith(selectedYear)) { errors.push(`Row ${idx + 1} must use a ${selectedYear} date.`); return; }
+        if (seen.has(date)) { errors.push(`Row ${idx + 1} repeats ${date}.`); return; }
         seen.add(date);
         payload.push({ as_of_date: date, balance_cents: cents });
       });
@@ -1025,7 +1523,6 @@ function renderAdmin(container) {
       }
     };
   }
-
 
   function renderAdminFundNavSection(parent) {
     const card = document.createElement('div');
@@ -1078,7 +1575,7 @@ function renderAdmin(container) {
       if (!eventRows.length) addEventRow({});
       mount.querySelector('#addNavRow').onclick = () => addNavRow({});
       mount.querySelector('#addNavEventRow').onclick = () => addEventRow({});
-                  mount.querySelector('#applyNavPaste').onclick = () => {
+      mount.querySelector('#applyNavPaste').onclick = () => {
         const raw = mount.querySelector('#navBulkPaste').value || '';
         const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
         if (!lines.length) return toast('Paste at least one NAV row first.', false);
@@ -1087,17 +1584,11 @@ function renderAdmin(container) {
         lines.forEach((line, idx) => {
           const clean = line.replace(/\$+/g, '').trim();
           const m = clean.match(/^(\d{4}-\d{2}-\d{2})[\t ]+(.+)$/);
-          if (!m) {
-            bad.push(idx + 1);
-            return;
-          }
+          if (!m) { bad.push(idx + 1); return; }
           const date = m[1];
           const valueRaw = m[2].trim().replace(/,/g, '');
           const cents = toUsdInputCents(valueRaw);
-          if (cents === null) {
-            bad.push(idx + 1);
-            return;
-          }
+          if (cents === null) { bad.push(idx + 1); return; }
           addNavRow({ as_of_date: date, nav_per_share_cents: cents });
           appended += 1;
         });
@@ -1139,14 +1630,28 @@ function renderAdmin(container) {
   function renderAdminTransactionsSection(parent, bundle) {
     const sec = document.createElement('div');
     sec.className = 'card inner-card';
-    const rows = (bundle.transactions || []).slice().sort((a, b) => a.tx_date.localeCompare(b.tx_date));
+    const rows = (bundle.transactions || []).slice().sort((a, b) => String(a.tx_date || '').localeCompare(String(b.tx_date || '')));
+   
     sec.innerHTML = `
       <h3>Transactions</h3>
       <div class="subtle">Date, amount, and NAV/share are entered manually.</div>
-      <div class="table-wrap"><table class="table mono"><thead><tr><th>Date</th><th>Type</th><th>Amount (USD)</th><th>NAV / Share (USD)</th><th>Notes</th><th></th></tr></thead><tbody id="txBody"></tbody></table></div>
-      <div class="row wrap-row top-gap"><button id="addTxRow">Add Transaction</button><button id="saveTxRows">Save Transactions</button></div>`;
+      <div class="admin-tx-table-wrap table-wrap">
+        <table class="table mono">
+          <thead><tr><th>Date</th><th>Type</th><th>Amount (USD)</th><th>NAV / Share (USD)</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="txBody"></tbody>
+        </table>
+      </div>
+      <div class="admin-mobile-rows" id="txMobileRows"></div>
+      <div class="row wrap-row top-gap">
+        <button id="addTxRow">Add Transaction</button>
+        <button id="saveTxRows">Save Transactions</button>
+      </div>`;
+   
     parent.appendChild(sec);
+   
     const tbody = sec.querySelector('#txBody');
+    const mobileRows = sec.querySelector('#txMobileRows');
+   
     const addRow = (tx = {}) => {
       const tr = makeTableRow([
         `<td><input class="date-input" type="date" value="${escapeHtml(tx.tx_date || '')}" /></td>`,
@@ -1156,12 +1661,24 @@ function renderAdmin(container) {
         `<td><input class="notes-input" value="${escapeHtml(tx.notes || '')}" placeholder="Optional" /></td>`,
         `<td><button class="ghost-btn delete-row">Remove</button></td>`
       ]);
-      tr.querySelector('.delete-row').onclick = () => tr.remove();
       tbody.appendChild(tr);
+   
+      // NEW =========
+      syncAdminMobileRow(tr, mobileRows, [
+        { label: 'Date',          querySelector: '.date-input',   fullWidth: false },
+        { label: 'Type',          querySelector: '.type-input',   fullWidth: false },
+        { label: 'Amount (USD)',  querySelector: '.amount-input', fullWidth: false },
+        { label: 'NAV / Share',   querySelector: '.nav-input',    fullWidth: false },
+        { label: 'Notes',         querySelector: '.notes-input',  fullWidth: true  }
+      ]);
     };
+    //======================================================================
+   
     rows.forEach(addRow);
     if (!rows.length) addRow({});
+   
     sec.querySelector('#addTxRow').onclick = () => addRow({});
+   
     sec.querySelector('#saveTxRows').onclick = async () => {
       const payload = [...tbody.querySelectorAll('tr')].map((tr) => ({
         tx_date: tr.querySelector('.date-input').value,
@@ -1180,30 +1697,66 @@ function renderAdmin(container) {
     };
   }
 
-  refreshSidebar().then(() => {
-    if (state.adminSelectedUserId) loadDetail(state.adminSelectedUserId);
-    else detail.innerHTML = '<div class="card inner-card"><div class="subtle">No investor selected.</div></div>';
-  }).catch((e) => {
-    detail.innerHTML = `<div class="card inner-card"><div class="subtle">${escapeHtml(e.message || 'Failed to load admin portal.')}</div></div>`;
-  });
-}
+  void (async () => {
+    try {
+      await refreshSidebar();
+      if (state.adminSelectedUserId) await loadDetail(state.adminSelectedUserId);
+    } catch (e) {
+      toast(e.message || 'Failed to load admin data.', false);
+    }
+  })();
+};
 
 function renderHome() {
   app.innerHTML = '';
+  document.querySelector('.mobile-nav')?.remove();
+ 
   const acct = document.getElementById('siteHeaderAcct');
   if (acct) {
-    const adminViewing = state.impersonation ? `<button id="returnAdmin" class="ghost-btn">Return to Admin</button>` : '';
+    const adminViewing = state.impersonation
+      ? `<button id="returnAdmin" class="ghost-btn">Return to Admin</button>`
+      : '';
     acct.innerHTML = `<div class="row wrap-row"><div class="subtle">${escapeHtml(state.user.email)} (${escapeHtml(state.user.role)})</div>${adminViewing}<button id="logout">Logout</button></div>`;
     acct.querySelector('#logout').onclick = () => {
       clearSession();
+      document.querySelector('.mobile-nav')?.remove(); // NEW
       renderLogin();
     };
     const returnBtn = acct.querySelector('#returnAdmin');
     if (returnBtn) returnBtn.onclick = () => stopImpersonation();
   }
+ 
   renderLastUpdatedSection(app);
+ 
   api('/api/me').then((bundle) => {
     state.user = bundle.user;
+    app.innerHTML = '';
+ 
+    const isAdmin = bundle.user.role === 'admin' && !bundle.session?.impersonating;
+ 
+    function renderSection(navId, renderFn, ...args) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'nav-section';
+      wrapper.dataset.navId = navId;
+      renderFn(wrapper, ...args);
+      app.appendChild(wrapper);
+      return wrapper;
+    }
+ 
+    renderSection('summary', (container, b) => {
+      renderSummaryCards(container, b);
+      renderBalanceSection(container, b);
+    }, bundle);
+
+    renderSection('transactions', (container, b) => {
+      renderTransactionsSection(container, b);
+      renderNetDepositsSection(container, b);
+    }, bundle);
+
+    renderSection('documents', renderDocumentsSection, bundle); // NEW
+ 
+    renderSection('account', renderPasswordChange);
+ 
     if (bundle.session?.impersonating && !state.impersonation) {
       state.impersonation = {
         actorEmail: bundle.session.actor_email || 'Admin',
@@ -1218,12 +1771,13 @@ function renderHome() {
       app.appendChild(banner);
       banner.querySelector('#bannerReturnAdmin').onclick = () => stopImpersonation();
     }
-    renderSummaryCards(app, bundle);
-    renderBalanceSection(app, bundle);
-    renderNetDepositsSection(app, bundle);
-    renderTransactionsSection(app, bundle);
-    renderPasswordChange(app);
-    if (bundle.user.role === 'admin' && !bundle.session?.impersonating) renderAdmin(app);
+ 
+    if (isAdmin) {
+      renderSection('admin', renderAdmin);
+    }
+ 
+    renderMobileNav(isAdmin);
+ 
   }).catch((e) => toast(e.message || 'Failed to load profile.', false));
 }
 
