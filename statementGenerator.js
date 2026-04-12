@@ -281,10 +281,15 @@ async function generateMonthlyStatements({
     : allInvestors;
 
   // Launch once for all users.
+  const executablePath = resolveChromiumExecutablePath();
+  console.log('Using Chromium executable path:', executablePath);
+
   const browser = await puppeteer.launch({
-  executablePath: '/usr/bin/chromium',
-  args: ['--no-sandbox', '--disable-setuid-sandbox'],
- args: ['--no-sandbox','--disable-setuid-sandbox'], headless: 'new' });
+    executablePath,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    headless: true,
+    ...puppeteerLaunchOptions
+  });
   const page = await browser.newPage();
 
   let generated = 0;
@@ -296,9 +301,11 @@ async function generateMonthlyStatements({
     const investorLabel = (inv.display_label || inv.email || 'Investor').trim();
 
     try {
-      const safePrefix = (fileNamePrefix || 'Monthly_Statement').replace(/[^a-zA-Z0-9_\-]/g, '_');
-      // No user ID or date suffix — clean filename e.g. Monthly_Statement.pdf
-      const fileName = `${safePrefix}.pdf`;
+      const safePrefix = sanitizeFileStem(fileNamePrefix || 'Monthly_Statement');
+      const safeInvestor = sanitizeFileStem(investorLabel || `Investor_${userId}`);
+      const safeStart = sanitizeFileStem(startDate);
+      const safeEnd = sanitizeFileStem(endDate);
+      const fileName = `${safePrefix}_${safeInvestor}_${safeStart}_to_${safeEnd}.pdf`;
       const filePath = path.join(uploadDir, fileName);
 
       // Allow re-running generation for the same period: replace DB row(s) and PDF on disk.
@@ -387,11 +394,15 @@ async function generateMonthlyStatements({
 
       generated += 1;
     } catch (e) {
-      errors.push({ userId: inv.id, error: e?.message || String(e) });
+      console.error(`STATEMENT ERROR FOR USER ${inv.id}:`, e?.stack || e);
+      errors.push({ userId: inv.id, investor: investorLabel, error: e?.stack || e?.message || String(e) });
     }
   }
 
   await browser.close();
+  if (generated === 0 && errors.length) {
+    throw new Error(errors.map((x) => `${x.investor || x.userId}: ${x.error}`).join(' | '));
+  }
   return { startDate, endDate, generated, skipped, errors };
 }
 

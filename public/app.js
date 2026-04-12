@@ -173,7 +173,11 @@ async function api(path, opts = {}) {
     let message = 'Request failed';
     try {
       const data = await res.json();
-      message = data.error || message;
+      if (data?.details) {
+        message = `${data.error || message}: ${data.details}`;
+      } else {
+        message = data?.error || message;
+      }
     } catch {}
     throw new Error(message);
   }

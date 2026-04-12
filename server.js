@@ -884,7 +884,8 @@ app.post('/api/admin/statements/generate', auth, adminOnly, async (req, res) => 
 
     res.json({ ...result, frequency, statementTitle, fileNamePrefix, startDate, endDate });
   } catch (e) {
-    res.status(500).json({ error: 'Statement generation failed', details: e?.message || String(e) });
+    console.error('STATEMENT GENERATION ERROR:', e?.stack || e);
+    res.status(500).json({ error: 'Statement generation failed', details: e?.stack || e?.message || String(e) });
   }
 });
 
@@ -905,7 +906,8 @@ app.post('/api/admin/statements/generate-monthly', auth, adminOnly, async (req, 
     });
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: 'Statement generation failed', details: e?.message || String(e) });
+    console.error('STATEMENT GENERATION ERROR:', e?.stack || e);
+    res.status(500).json({ error: 'Statement generation failed', details: e?.stack || e?.message || String(e) });
   }
 });
 // end
