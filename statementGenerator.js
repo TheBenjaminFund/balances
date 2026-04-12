@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -281,7 +281,10 @@ async function generateMonthlyStatements({
     : allInvestors;
 
   // Launch once for all users.
-  const browser = await puppeteer.launch({ args: ['--no-sandbox','--disable-setuid-sandbox'], headless: 'new' });
+  const browser = await puppeteer.launch({
+  executablePath: '/usr/bin/chromium',
+  args: ['--no-sandbox', '--disable-setuid-sandbox'],
+ args: ['--no-sandbox','--disable-setuid-sandbox'], headless: 'new' });
   const page = await browser.newPage();
 
   let generated = 0;
