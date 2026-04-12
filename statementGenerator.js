@@ -3,7 +3,24 @@
 // Uses Puppeteer to render the HTML to a PDF
 // Uses the data from the database to generate the statements
 function resolveChromiumExecutablePath() {
-  return process.env.CHROME_PATH || '/usr/bin/chromium';
+  const paths = [
+    process.env.CHROME_PATH,
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable'
+  ];
+
+  for (const p of paths) {
+    if (!p) continue;
+    try {
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    } catch {}
+  }
+
+  throw new Error('No valid Chromium executable found');
 }
 import fs from 'fs';
 import path from 'path';
@@ -12,7 +29,7 @@ import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Embed logo as a data URI so Puppeteer can render it without relying on a web server.
+// Embed logo as a data URI so  can render it without relying on a web server.
 let logoDataUri = '';
 try {
   const logoPath = path.join(__dirname, 'public', 'logo.png');
@@ -238,7 +255,7 @@ function buildStatementHtml({
 }
 
 async function renderHtmlToPdf(page, html, filePath) {
-  // Reuse a single Puppeteer page for speed when generating multiple PDFs.
+  // Reuse a single  page for speed when generating multiple PDFs.
   // We render static HTML (no external navigation). Waiting for `networkidle0` can
   // hang in headless mode if any background requests never fully settle.
   await page.setContent(html, { waitUntil: 'domcontentloaded' });
@@ -260,7 +277,7 @@ async function generateMonthlyStatements({
   all,
   run,
   dataDir,
-  puppeteerLaunchOptions = {}
+  LaunchOptions = {}
 }) {
   if (!startDate || !endDate) {
     throw new Error('startDate and endDate are required');
@@ -283,15 +300,15 @@ async function generateMonthlyStatements({
     : allInvestors;
 
   // Launch once for all users.
-  const executablePath = resolveChromiumExecutablePath();
-  console.log('Using Chromium executable path:', executablePath);
-
-  const browser = await puppeteer.launch({
-    executablePath,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-    headless: true,
-    ...puppeteerLaunchOptions
-  });
+ const browser = await puppeteer.launch({
+  executablePath: resolveChromiumExecutablePath(),
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage'
+  ],
+  headless: true
+});
   const page = await browser.newPage();
 
   let generated = 0;
