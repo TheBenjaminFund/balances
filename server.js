@@ -884,7 +884,8 @@ app.post('/api/admin/statements/generate', auth, adminOnly, async (req, res) => 
 
     res.json({ ...result, frequency, statementTitle, fileNamePrefix, startDate, endDate });
   } catch (e) {
-    res.status(500).json({ error: 'Statement generation failed', details: e?.message || String(e) });
+    console.error('Statement generation failed:', e);
+    res.status(500).json({ error: 'Statement generation failed', details: e?.stack || e?.message || String(e) });
   }
 });
 
@@ -905,7 +906,8 @@ app.post('/api/admin/statements/generate-monthly', auth, adminOnly, async (req, 
     });
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: 'Statement generation failed', details: e?.message || String(e) });
+    console.error('Statement generation failed:', e);
+    res.status(500).json({ error: 'Statement generation failed', details: e?.stack || e?.message || String(e) });
   }
 });
 // end
@@ -950,6 +952,32 @@ app.post('/api/admin/upload-doc', auth, adminOnly, upload.single('document'), as
   }
 });
 // end
+
+
+app.delete('/api/documents/:id', auth, adminOnly, async (req, res) => {
+  try {
+    const docId = parseId(req.params.id);
+    if (!docId) return res.status(400).json({ error: 'Invalid document id' });
+
+    const doc = await get('SELECT * FROM documents WHERE id = ?', [docId]);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    await run('DELETE FROM documents WHERE id = ?', [docId]);
+
+    if (doc.file_path && fs.existsSync(doc.file_path)) {
+      try {
+        fs.unlinkSync(doc.file_path);
+      } catch (e) {
+        return res.status(500).json({ error: 'Document record deleted but file removal failed', details: e?.message || String(e) });
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete document failed:', err);
+    res.status(500).json({ error: 'Delete failed', details: err?.message || String(err) });
+  }
+});
 
 app.get('/', (req, res) => {
   const indexPath = path.join(__dirname, 'public', 'index.html');

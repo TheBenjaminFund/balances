@@ -280,8 +280,12 @@ async function generateMonthlyStatements({
     ? allInvestors.filter((inv) => investorIds.includes(inv.id))
     : allInvestors;
 
+  if (!investors.length) {
+    throw new Error('No matching investors found for statement generation');
+  }
+
   // Launch once for all users.
-  const browser = await puppeteer.launch({ args: ['--no-sandbox','--disable-setuid-sandbox'], headless: 'new' });
+  const browser = await puppeteer.launch({ args: ['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage'], headless: 'new' });
   const page = await browser.newPage();
 
   let generated = 0;
@@ -294,8 +298,8 @@ async function generateMonthlyStatements({
 
     try {
       const safePrefix = (fileNamePrefix || 'Monthly_Statement').replace(/[^a-zA-Z0-9_\-]/g, '_');
-      // No user ID or date suffix — clean filename e.g. Monthly_Statement.pdf
-      const fileName = `${safePrefix}.pdf`;
+      const safeInvestor = (investorLabel || `Investor_${userId}`).replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 60) || `Investor_${userId}`;
+      const fileName = `${safePrefix}_${safeInvestor}_${userId}.pdf`;
       const filePath = path.join(uploadDir, fileName);
 
       // Allow re-running generation for the same period: replace DB row(s) and PDF on disk.
@@ -389,6 +393,9 @@ async function generateMonthlyStatements({
   }
 
   await browser.close();
+  if (generated === 0 && errors.length) {
+    throw new Error(errors.map((x) => `Investor ${x.userId}: ${x.error}`).join(' | '));
+  }
   return { startDate, endDate, generated, skipped, errors };
 }
 
