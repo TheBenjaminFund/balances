@@ -1782,3 +1782,14 @@ function renderHome() {
 }
 
 renderLogin();
+
+
+async function deleteDocument(id) {
+  if (!confirm('Delete this document?')) return;
+
+  await fetch(`/api/documents/${id}`, {
+    method: 'DELETE'
+  });
+
+  loadDocuments();
+}
