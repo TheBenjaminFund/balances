@@ -1,11 +1,3 @@
-
-const fs = require('fs');
-const path = require('path');
-const statementsDir = path.join(__dirname, 'statements');
-if (!fs.existsSync(statementsDir)) {
-  fs.mkdirSync(statementsDir, { recursive: true });
-}
-
 // Update 4-3-26: New function for automatically generating monthly statements for all investors
 // Generates a PDF statement for each investor for the previous calendar month (can change the date range if needed)
 // Uses Puppeteer to render the HTML to a PDF

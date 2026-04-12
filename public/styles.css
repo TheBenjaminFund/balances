@@ -533,25 +533,3 @@ button.danger-btn{background:linear-gradient(135deg,#b60000,#ff4d4d)}
     display: block;
   }
 }
-
-.documents-table {
-  display: grid;
-  grid-template-columns: 2fr 1fr auto;
-  gap: 12px;
-  align-items: center;
-}
-
-.document-row {
-  display: contents;
-}
-
-.document-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.document-actions {
-  display: flex;
-  gap: 8px;
-}

@@ -14,18 +14,23 @@ import { fileURLToPath } from 'url';
 // generateMonthlyStatements function
 import multer from 'multer';
 import { generateMonthlyStatements } from './statementGenerator.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
+
 // end
 
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname
-
-const dataDir = require('path').join(__dirname, 'data');
-const fs = require('fs');
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
- = path.dirname(__filename);
+const __dirname = path.dirname(__filename);
 dotenv.config();
 
 const PORT = process.env.PORT || 3000;
