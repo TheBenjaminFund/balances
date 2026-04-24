@@ -4,9 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "seed": "node seed-dummy-data.js",
-    "seed:statements": "node seed-dummy-data.js --generate"
+    "start": "node server.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

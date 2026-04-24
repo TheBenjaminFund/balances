@@ -4,31 +4,34 @@ A lightweight Node/Express + SQLite portal for private-fund operations.
 
 It includes:
 - a public landing page with a manually maintained NAV/share chart
-- an investor dashboard with balance history, transaction filtering, and yearly net-deposit reporting
-- an admin portal for user management, balance history entry, transaction maintenance, fund NAV maintenance, backups, and investor impersonation
+- an investor dashboard with balance history, transaction filtering, yearly net-deposit reporting, and a Documents & Statements section for receiving statements from admins
+- an admin portal for user management, balance history entry, transaction maintenance, fund NAV maintenance, backups, investor impersonation, PDF statement generation, and document management
 
 ## Core Features
 
 ### Public landing page
-- branded login experience
+- branded login experience with sticky navbar
 - public NAV/share chart with range toggles
 - admin-managed fund event markers for notable dates
 - mobile-friendly investor/public layout
 
 ### Investor dashboard
+- sticky navbar for easy navigation on desktop and mobile
 - account summary with **Total Invested**, **Current NAV**, and return
-- balance-history chart with custom tooltips and transaction markers
+- collapsible balance history section with chart, custom tooltips, and transaction markers
 - net-deposits-by-year bar chart
-- transaction table with:
+- collapsible transaction table with:
   - type filter
   - year filter
   - newest/oldest sorting
   - amount high/low sorting
+- **Documents & Statements** section for viewing and downloading PDF statements sent by admins
 - password change flow
 
 ### Admin portal
 - create investors and reset passwords
 - assign custom investor display labels
+- store investor ID and mailing address per investor
 - sort investor list by label, NAV, invested capital, and return
 - maintain weekly/biweekly balance history
 - bulk-paste balance history from spreadsheets
@@ -38,6 +41,9 @@ It includes:
 - maintain public fund event markers
 - download SQLite backups
 - **View as Investor** impersonation mode with one-click return to admin
+- generate PDF statements for all investors: monthly, quarterly, and annual; re-running for the same period replaces the prior statement
+- upload arbitrary PDF documents to individual investor document centers
+- delete documents from investor document centers
 
 ## Tech Stack
 - Node.js
@@ -52,15 +58,16 @@ It includes:
 
 ```text
 .
-├── server.js            # Express server, auth, API routes, SQLite setup
+├── server.js               # Express server, auth, API routes, SQLite setup
+├── statementGenerator.js   # PDF statement builder (monthly, quarterly, annual)
 ├── public/
-│   ├── index.html       # Single-page shell
-│   ├── app.js           # Frontend rendering and admin/investor logic
-│   ├── styles.css       # Main styles
-│   ├── theme.css        # Theme variables
-│   └── logo.png         # Branding asset
-├── .env.sample          # Example environment variables
-├── .gitignore           # Recommended ignores for safe sharing
+│   ├── index.html          # Single-page shell
+│   ├── app.js              # Frontend rendering and admin/investor logic
+│   ├── styles.css          # Main styles
+│   ├── theme.css           # Theme variables
+│   └── logo.png            # Branding asset
+├── .env.sample             # Example environment variables
+├── .gitignore              # Recommended ignores for safe sharing
 ├── package.json
 └── README.md
 ```
@@ -128,12 +135,20 @@ If production data was committed in old Git history, that should be cleaned sepa
 - `GET /api/admin/users`
 - `GET /api/admin/users/:id`
 - `POST /api/admin/users`
-- `PATCH /api/admin/users/:id/summary`
+- `PATCH /api/admin/users/:id/summary` — accepts `display_label`, `investor_id`, and `address`
 - `PUT /api/admin/users/:id/balance-history/:year`
 - `PUT /api/admin/users/:id/transactions`
 - `POST /api/admin/users/:id/reset-password`
 - `POST /api/admin/users/:id/impersonate`
 - `DELETE /api/admin/users/:id`
+
+### Admin: statements & documents
+- `POST /api/admin/statements/generate` — generate PDF statements (monthly, quarterly, annual) for all or selected investors
+- `POST /api/admin/upload-doc` — upload a PDF document to an investor's document center
+- `DELETE /api/admin/documents/:id` — delete a document
+
+### Investor: documents
+- `GET /api/documents/:id` — download a document (auth required; investors can only access their own)
 
 ### Admin: fund-level data
 - `GET /api/admin/fund-nav`
@@ -157,14 +172,13 @@ If production data was committed in old Git history, that should be cleaned sepa
 
 If you are reviewing this project for the first time, the best entry points are:
 - `server.js` for database schema, auth, and route behavior
+- `statementGenerator.js` for PDF generation logic
 - `public/app.js` for rendering logic and admin workflow
 - `renderAdmin(...)` in `public/app.js` for most admin UX work
 - `renderHome(...)`, `renderBalanceSection(...)`, and `renderTransactionsSection(...)` for investor-facing features
+- `renderDocumentsSection(...)` for the investor Documents & Statements section
 - `renderPublicNavSection(...)` for the landing-page NAV/share chart
 
 ## Current Priorities / Likely Next Additions
-- investor document center
-- PDF statement generation
-- additional mobile polish
 - optional security hardening / sanitized shareable repo mode
 

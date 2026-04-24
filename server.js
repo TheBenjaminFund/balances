@@ -116,13 +116,17 @@ function sanitizeYear(v) {
   return y;
 }
 
+const VALID_TX_TYPES = new Set(['deposit','redemption','performance_fee','redemption_fee','management_credit','extraordinary_dividend','other_fee','other_credit','tax']);
+const NEGATIVE_TX_TYPES = new Set(['redemption','performance_fee','redemption_fee','other_fee','tax']);
+function txSign(type) { return NEGATIVE_TX_TYPES.has(type) ? -1 : 1; }
+
 function deriveYearlyTotalsFromTransactions(transactions = []) {
   const map = new Map();
   for (const tx of transactions) {
     const year = sanitizeYear(String(tx?.tx_date || '').slice(0, 4));
     if (!year) continue;
     const amt = Math.abs(Number(tx?.amount_cents || 0));
-    const signed = tx?.tx_type === 'redemption' ? -amt : amt;
+    const signed = txSign(tx?.tx_type) * amt;
     map.set(year, (map.get(year) || 0) + signed);
   }
   return [...map.entries()]
@@ -181,7 +185,7 @@ async function initDb() {
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     tx_date TEXT NOT NULL,
-    tx_type TEXT NOT NULL CHECK (tx_type IN ('deposit','redemption')),
+    tx_type TEXT NOT NULL CHECK (tx_type IN ('deposit','redemption','performance_fee','redemption_fee','management_credit','extraordinary_dividend','other_fee','other_credit','tax')),
     amount_cents INTEGER NOT NULL,
     nav_per_share_cents INTEGER,
     notes TEXT,
@@ -225,6 +229,12 @@ async function initDb() {
   if (!names.includes('display_label')) {
     await run("ALTER TABLE users ADD COLUMN display_label TEXT");
   }
+  if (!names.includes('investor_id')) {
+    await run("ALTER TABLE users ADD COLUMN investor_id TEXT");
+  }
+  if (!names.includes('address')) {
+    await run("ALTER TABLE users ADD COLUMN address TEXT");
+  }
 
   // Seed / ensure admin user
   if (ADMIN_EMAIL) {
@@ -252,6 +262,24 @@ async function initDb() {
   const docNames = (docCols || []).map((c) => c.name);
   if (!docNames.includes('file_type')) {
     await run("ALTER TABLE documents ADD COLUMN file_type TEXT NOT NULL DEFAULT 'application/pdf'").catch(() => {});
+  }
+
+  // Migrate investor_transactions CHECK constraint to include new tx types
+  const txMeta = await get("SELECT sql FROM sqlite_master WHERE type='table' AND name='investor_transactions'").catch(() => null);
+  if (txMeta && !txMeta.sql.includes('performance_fee')) {
+    await run('ALTER TABLE investor_transactions RENAME TO investor_transactions_v1');
+    await run(`CREATE TABLE investor_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      tx_date TEXT NOT NULL,
+      tx_type TEXT NOT NULL CHECK (tx_type IN ('deposit','redemption','performance_fee','redemption_fee','management_credit','extraordinary_dividend','other_fee','other_credit','tax')),
+      amount_cents INTEGER NOT NULL,
+      nav_per_share_cents INTEGER,
+      notes TEXT,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    )`);
+    await run('INSERT INTO investor_transactions SELECT * FROM investor_transactions_v1');
+    await run('DROP TABLE investor_transactions_v1');
   }
 }
 // end
@@ -285,6 +313,8 @@ async function loadInvestorBundle(userId) {
       email,
       role,
       display_label,
+      investor_id,
+      address,
       balance_cents,
       deposit_cents,
       year_2024_deposits_cents,
@@ -478,7 +508,7 @@ app.get('/api/admin/users', auth, adminOnly, async (req, res) => {
           LIMIT 1
         ), u.balance_cents, 0) AS balance_cents,
         COALESCE((
-          SELECT SUM(CASE WHEN tx.tx_type = 'redemption' THEN -ABS(tx.amount_cents) ELSE ABS(tx.amount_cents) END)
+          SELECT SUM(CASE WHEN tx.tx_type IN ('redemption','performance_fee','redemption_fee','other_fee','tax') THEN -ABS(tx.amount_cents) ELSE ABS(tx.amount_cents) END)
           FROM investor_transactions tx
           WHERE tx.user_id = u.id
         ), (
@@ -545,10 +575,26 @@ app.patch('/api/admin/users/:id/summary', auth, adminOnly, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Bad id' });
-    const { display_label } = req.body || {};
-    const label = typeof display_label === 'string' ? display_label.trim().slice(0, 80) : null;
-    if (display_label === undefined) return res.status(400).json({ error: 'Nothing to update' });
-    await run('UPDATE users SET display_label = ? WHERE id = ?', [label || null, id]);
+    const { display_label, investor_id, address } = req.body || {};
+    if (display_label === undefined && investor_id === undefined && address === undefined) {
+      return res.status(400).json({ error: 'Nothing to update' });
+    }
+    const sets = [];
+    const vals = [];
+    if (display_label !== undefined) {
+      sets.push('display_label = ?');
+      vals.push(typeof display_label === 'string' ? display_label.trim().slice(0, 80) || null : null);
+    }
+    if (investor_id !== undefined) {
+      sets.push('investor_id = ?');
+      vals.push(typeof investor_id === 'string' ? investor_id.trim().slice(0, 80) || null : null);
+    }
+    if (address !== undefined) {
+      sets.push('address = ?');
+      vals.push(typeof address === 'string' ? address.trim().slice(0, 300) || null : null);
+    }
+    vals.push(id);
+    await run(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, vals);
     res.json({ updated: true });
   } catch {
     res.status(500).json({ error: 'DB error' });
@@ -615,7 +661,7 @@ app.put('/api/admin/users/:id/transactions', auth, adminOnly, async (req, res) =
     const clean = [];
     for (const row of rows) {
       const tx_date = sanitizeDate(row?.tx_date);
-      const tx_type = row?.tx_type === 'redemption' ? 'redemption' : row?.tx_type === 'deposit' ? 'deposit' : null;
+      const tx_type = VALID_TX_TYPES.has(row?.tx_type) ? row.tx_type : null;
       const amount_cents = cleanMoneyCents(row?.amount_cents);
       const nav_per_share_cents = row?.nav_per_share_cents === '' || row?.nav_per_share_cents === null || row?.nav_per_share_cents === undefined
         ? null
@@ -861,20 +907,24 @@ app.post('/api/admin/statements/generate', auth, adminOnly, async (req, res) => 
       statementTitle = 'Monthly Statement';
     }
 
-    // fileNamePrefix uses custom name if provided, otherwise derives from frequency
-    const fileNamePrefix = customName
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const startDateObj = new Date(startDate + 'T00:00:00');
+    const statementMonth = MONTHS[startDateObj.getMonth()];
+    const statementYear = year || startDateObj.getFullYear();
+    const statementQuarter = quarter || null;
+    const customFileName = customName
       ? customName.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '')
-      : frequency === 'quarterly'
-        ? `Q${quarter || ''}_${year || ''}_Statement`
-        : (frequency === 'annually' || frequency === 'annual' || frequency === 'yearly')
-          ? `${year || 'Annual'}_Annual_Statement`
-          : `Monthly_Statement`;
+      : null;
 
     const result = await generateMonthlyStatements({
       startDate,
       endDate,
       statementTitle,
-      fileNamePrefix,
+      customFileName,
+      frequency,
+      statementMonth,
+      statementYear,
+      statementQuarter,
       investorIds,
       dataDir,
       get,
@@ -882,35 +932,13 @@ app.post('/api/admin/statements/generate', auth, adminOnly, async (req, res) => 
       run
     });
 
-    res.json({ ...result, frequency, statementTitle, fileNamePrefix, startDate, endDate });
+    res.json({ ...result, frequency, statementTitle, customFileName, startDate, endDate });
   } catch (e) {
     console.error('STATEMENT GENERATION ERROR:', e?.stack || e);
     res.status(500).json({ error: 'Statement generation failed', details: e?.stack || e?.message || String(e) });
   }
 });
 
-// Backwards-compatible: monthly statements only
-app.post('/api/admin/statements/generate-monthly', auth, adminOnly, async (req, res) => {
-  try {
-    const now = new Date();
-    const prev = computePrevMonthRange(now);
-    const result = await generateMonthlyStatements({
-      startDate: prev.startDate,
-      endDate: prev.endDate,
-      statementTitle: 'Monthly Statement',
-      fileNamePrefix: 'Monthly_Statement',
-      dataDir,
-      get,
-      all,
-      run
-    });
-    res.json(result);
-  } catch (e) {
-    console.error('STATEMENT GENERATION ERROR:', e?.stack || e);
-    res.status(500).json({ error: 'Statement generation failed', details: e?.stack || e?.message || String(e) });
-  }
-});
-// end
 
 app.get('/api/public-stats', async (req, res) => {
   try {
@@ -934,6 +962,21 @@ app.get('/api/public-landing', async (req, res) => {
   }
 });
 
+
+// Update 4-14-26: Delete a document (admin only) — removes file from disk and DB
+app.delete('/api/admin/documents/:id', auth, adminOnly, async (req, res) => {
+  try {
+    const doc = await get(`SELECT * FROM documents WHERE id = ?`, [req.params.id]);
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    if (fs.existsSync(doc.file_path)) fs.unlinkSync(doc.file_path);
+    await run(`DELETE FROM documents WHERE id = ?`, [doc.id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete document' });
+  }
+});
+// end
 
 // Update 4-3-26: Upload document for investor
 app.post('/api/admin/upload-doc', auth, adminOnly, upload.single('document'), async (req, res) => {

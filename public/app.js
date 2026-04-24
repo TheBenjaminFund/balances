@@ -25,6 +25,21 @@ const centsToInput = (cents) => cents === null || cents === undefined ? '' : (Nu
 const todayYear = () => new Date().getFullYear();
 const uniqueYears = (rows, key) => [...new Set((rows || []).map((r) => Number(String(r[key]).slice(0, 4) || r[key])).filter(Boolean))].sort((a, b) => a - b);
 
+const TX_TYPE_LABELS = {
+  deposit: 'Deposit',
+  redemption: 'Redemption',
+  performance_fee: 'Performance Fee',
+  redemption_fee: 'Redemption Fee',
+  management_credit: 'Management Credit',
+  extraordinary_dividend: 'Extraordinary Dividend',
+  other_fee: 'Other Fee',
+  other_credit: 'Other Credit',
+  tax: 'Tax',
+};
+const NEGATIVE_TX_TYPES = new Set(['redemption','performance_fee','redemption_fee','other_fee','tax']);
+const txLabel = (type) => TX_TYPE_LABELS[type] || type;
+const isTxNegative = (type) => NEGATIVE_TX_TYPES.has(type);
+
 const parseISODate = (value) => {
   if (!value) return null;
   const d = new Date(`${value}T00:00:00`);
@@ -92,8 +107,9 @@ function summarizeTransactionsByDate(transactions) {
       items: []
     };
     existing.count += 1;
-    if (tx.tx_type === 'redemption') existing.redemption_cents += Number(tx.amount_cents || 0);
-    else existing.deposit_cents += Number(tx.amount_cents || 0);
+    const amt = Math.abs(Number(tx.amount_cents || 0));
+    if (isTxNegative(tx.tx_type)) existing.redemption_cents += amt;
+    else existing.deposit_cents += amt;
     existing.items.push(tx);
     map.set(tx.tx_date, existing);
   });
@@ -609,7 +625,8 @@ function renderNetDepositsSection(container, bundle) {
 
 
 // Update 4-3-26: Frontend 'Documents & Statements' section
-function renderDocumentsSection(parent, bundle) {
+// opts.onDelete(docId) — when provided (admin view), adds a Remove button per row
+function renderDocumentsSection(parent, bundle, opts = {}) {
   const section = document.createElement('div');
   section.className = 'card mt-2';
 
@@ -620,30 +637,46 @@ function renderDocumentsSection(parent, bundle) {
     html += `<p class="subtle">No documents available yet.</p>`;
   } else {
     html += `<div class="desktop-only">
-      <table class="full-width">
+      <table class="table doc-table">
         <thead>
-          <tr><th>Name</th><th>Date</th><th>Action</th></tr>
+          <tr><th>Name</th><th style="white-space:nowrap">Date</th><th style="white-space:nowrap">Action</th></tr>
         </thead>
         <tbody>`;
-      
+
     let mobileHtml = `<div class="mobile-only mobile-document-list">`;
 
+    const trashSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>`;
+
     docs.forEach(doc => {
+      const removeBtn = opts.onDelete
+        ? `<button type="button" data-doc-id="${doc.id}" class="remove-icon-btn remove-doc-btn" title="Remove document" style="display:inline-flex;width:28px;height:28px;vertical-align:middle;margin-left:6px">${trashSvg}</button>`
+        : '';
+
       html += `<tr>
-        <td>${escapeHtml(doc.file_name)}</td>
+        <td class="doc-name-cell">${escapeHtml(doc.file_name)}</td>
         <td>${formatDatePretty(doc.created_at)}</td>
-        <td><button type="button" data-doc-id="${doc.id}" class="ghost-btn download-doc-btn">Download</button></td>
+        <td style="white-space:nowrap">
+          <button type="button" data-doc-id="${doc.id}" class="ghost-btn download-doc-btn">Download</button>
+          ${removeBtn}
+        </td>
       </tr>`;
+
+      const mobileRemoveBtn = opts.onDelete
+        ? `<button type="button" data-doc-id="${doc.id}" class="remove-icon-btn remove-doc-btn" title="Remove document">${trashSvg}</button>`
+        : '';
 
       mobileHtml += `
         <div class="mobile-doc-card">
           <div class="doc-info">
-            <strong>${escapeHtml(doc.file_name)}</strong>
+            <strong class="doc-filename">${escapeHtml(doc.file_name)}</strong>
             <span class="subtle">${formatDatePretty(doc.created_at)}</span>
           </div>
-          <button type="button" data-doc-id="${doc.id}" class="download-icon-btn download-doc-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          </button>
+          <div style="display:flex;flex-direction:row;align-items:center;gap:8px">
+            <button type="button" data-doc-id="${doc.id}" class="download-icon-btn download-doc-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            </button>
+            ${mobileRemoveBtn}
+          </div>
         </div>`;
     });
     html += `</tbody></table></div>`;
@@ -658,6 +691,14 @@ function renderDocumentsSection(parent, bundle) {
       if (id) downloadDocument(id);
     });
   });
+  if (opts.onDelete) {
+    section.querySelectorAll('button.remove-doc-btn[data-doc-id]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-doc-id');
+        if (id) opts.onDelete(id);
+      });
+    });
+  }
   parent.appendChild(section);
 }
 // end
@@ -683,7 +724,23 @@ function renderAdminDocumentsSection(parent, bundle, refreshDetail) {
   parent.appendChild(card);
 
   const mount = card.querySelector('#adminDocsMount');
-  renderDocumentsSection(mount, bundle);
+  renderDocumentsSection(mount, bundle, {
+    onDelete: async (docId) => {
+      if (!confirm('Remove this document? This cannot be undone.')) return;
+      try {
+        const res = await fetch(`/api/admin/documents/${docId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${state.token}` }
+        });
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(payload?.error || 'Failed to remove document');
+        toast('Document removed.');
+        refreshDetail();
+      } catch (e) {
+        toast(e.message || 'Failed to remove document.', false);
+      }
+    }
+  });
 
   const fileEl = card.querySelector('#docFile');
   const catEl = card.querySelector('#docCategory');
@@ -765,6 +822,13 @@ function renderTransactionsSection(container, bundle) {
           <option value="all">All Types</option>
           <option value="deposit">Deposits</option>
           <option value="redemption">Redemptions</option>
+          <option value="performance_fee">Performance Fees</option>
+          <option value="redemption_fee">Redemption Fees</option>
+          <option value="management_credit">Management Credits</option>
+          <option value="extraordinary_dividend">Extraordinary Dividends</option>
+          <option value="other_fee">Other Fees</option>
+          <option value="other_credit">Other Credits</option>
+          <option value="tax">Tax</option>
         </select>
         <select id="txFilterYear"><option value="all">All Years</option></select>
         <select id="txSort">
@@ -808,16 +872,16 @@ function renderTransactionsSection(container, bundle) {
     tbody.innerHTML = rows.length ? rows.map((tx) => `
       <tr>
         <td data-label="Date">${escapeHtml(tx.tx_date)}</td>
-        <td data-label="Type">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</td>
+        <td data-label="Type">${escapeHtml(txLabel(tx.tx_type))}</td>
         <td data-label="Amount">${fmtMoney(tx.amount_cents)}</td>
         <td data-label="NAV / Share">${tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined ? '—' : fmtMoney(tx.nav_per_share_cents)}</td>
         <td data-label="Notes">${escapeHtml(tx.notes || '')}</td>
       </tr>`).join('') : '<tr><td colspan="5">No transactions match the selected filters.</td></tr>';
     mobileList.innerHTML = rows.length ? rows.map((tx) => `
-      <article class="mobile-tx-card compact ${tx.tx_type === 'redemption' ? 'tx-redemption' : 'tx-deposit'}">
+      <article class="mobile-tx-card compact ${isTxNegative(tx.tx_type) ? 'tx-redemption' : 'tx-deposit'}">
         <div class="mobile-tx-row-top">
           <span class="mobile-tx-date">${escapeHtml(tx.tx_date)}</span>
-          <span class="mobile-tx-pill">${escapeHtml(tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit')}</span>
+          <span class="mobile-tx-pill">${escapeHtml(txLabel(tx.tx_type))}</span>
           <strong class="mobile-tx-amount">${fmtMoney(tx.amount_cents)}</strong>
         </div>
         <div class="mobile-tx-row-bottom">
@@ -1018,6 +1082,11 @@ function renderAdmin(container) {
           <button id="createUser">Add Investor</button>
           <div class="subtle">Leave password blank to generate a temporary password.</div>
         </div>
+      </div>
+      <div class="card inner-card">
+        <h3>Fund NAV / Share</h3>
+        <div class="subtle">Manage the NAV/share history and fund events shown on the landing page.</div>
+        <button id="openFundNav" class="top-gap">Manage Fund NAV</button>
       </div>
       <div class="card inner-card">
         <h3>Investors</h3>
@@ -1257,6 +1326,11 @@ function renderAdmin(container) {
         toast(e.message || 'Statement generation failed.', false);
       }
     };
+
+    sidebar.querySelector('#openFundNav').onclick = () => {
+      detail.innerHTML = '';
+      renderAdminFundNavSection(detail);
+    };
   }
 
   async function loadDetail(id) {
@@ -1332,7 +1406,6 @@ function renderAdmin(container) {
       renderAdminBalancesSection(detail, bundle);
       renderAdminTransactionsSection(detail, bundle);
       renderAdminDocumentsSection(detail, bundle, () => loadDetail(id)); // new 'Statements' Section in Admin Portal
-      renderAdminFundNavSection(detail);
     } catch (e) {
       detail.innerHTML = `<div class="card inner-card"><div class="subtle">${escapeHtml(e.message || 'Failed to load investor.')}</div></div>`;
     }
@@ -1348,25 +1421,34 @@ function renderAdmin(container) {
           <label>Display Label</label>
           <input id="displayLabel" value="${escapeHtml(bundle.user.display_label || '')}" placeholder="Custom investor label" />
         </div>
-        <div></div>
+        <div>
+          <label>Investor ID</label>
+          <input id="investorId" value="${escapeHtml(bundle.user.investor_id || '')}" placeholder="e.g. BF-0042" />
+        </div>
+      </div>
+      <div class="top-gap">
+        <label>Address</label>
+        <textarea id="investorAddress" rows="3" placeholder="Investor mailing address">${escapeHtml(bundle.user.address || '')}</textarea>
       </div>
       <div class="stats three compact-stats top-gap">
         <div class="stat"><div class="label">Total Invested</div><div class="value small-value">${fmtMoney(bundle.user.deposit_cents)}</div><div class="subtle">Auto-calculated from transactions by year</div></div>
         <div class="stat"><div class="label">Current NAV</div><div class="value small-value">${fmtMoney(bundle.user.balance_cents)}</div><div class="subtle">Latest saved balance entry</div></div>
         <div class="stat"><div class="label">Calculation Mode</div><div class="value small-value">Automatic</div><div class="subtle">Transactions + balance history drive dashboard totals</div></div>
       </div>
-      <div class="subtle top-gap">Only the display label is edited here. Total Invested and Current NAV now update automatically from the investor ledger and balance history.</div>
-      <div class="top-gap"><button id="saveOverview">Save Label</button></div>`;
+      <div class="subtle top-gap">Display label, Investor ID, and Address appear on generated statements. Totals update automatically from the ledger.</div>
+      <div class="top-gap"><button id="saveOverview">Save</button></div>`;
     parent.appendChild(sec);
     sec.querySelector('#saveOverview').onclick = async () => {
       try {
         await api(`/api/admin/users/${bundle.user.id}/summary`, {
           method: 'PATCH',
           body: JSON.stringify({
-            display_label: sec.querySelector('#displayLabel').value.trim()
+            display_label: sec.querySelector('#displayLabel').value.trim(),
+            investor_id: sec.querySelector('#investorId').value.trim(),
+            address: sec.querySelector('#investorAddress').value.trim()
           })
         });
-        toast('Label saved.');
+        toast('Investor info saved.');
         sidebarRefresh(bundle.user.id);
       } catch (e) {
         toast(e.message || 'Save failed.', false);
@@ -1411,26 +1493,39 @@ function renderAdmin(container) {
           <h3>Weekly Balances</h3>
           <div class="subtle">Save one year at a time. Dates stay manual, but new rows can smart-prefill from your existing pattern.</div>
         </div>
-        <select id="balanceYearSelect">${years.map((y) => `<option value="${y}" ${String(y) === defaultYear ? 'selected' : ''}>${y}</option>`).join('')}</select>
+        <div class="row" style="gap:8px">
+          <select id="balanceYearSelect">${years.map((y) => `<option value="${y}" ${String(y) === defaultYear ? 'selected' : ''}>${y}</option>`).join('')}</select>
+          <button id="toggleBalances" class="ghost-btn">Show</button>
+        </div>
       </div>
-      <div class="admin-balance-table-wrap table-wrap">
-        <table class="table mono"><thead><tr><th>Date</th><th>Balance (USD)</th><th></th></tr></thead><tbody id="balanceBody"></tbody></table>
-      </div>
-      <div class="admin-mobile-rows" id="balanceMobileRows"></div>
-      <div class="subtle top-gap" id="balanceValidationHint">Each row must have a unique date inside the selected year.</div>
-      <div class="row wrap-row top-gap">
-        <button id="addBalanceRow">Add Balance Row</button>
-        <button id="addTenBalanceRows" class="ghost-btn">Add 10 Rows</button>
-        <button id="saveBalanceRows">Save Selected Year</button>
-      </div>
-      <details class="bulk-box top-gap"><summary>Bulk Paste Weekly Balances</summary><div class="subtle top-gap">Paste two columns from a spreadsheet: date and balance. Tabs, commas, or multiple spaces all work.</div><textarea id="balanceBulkPaste" rows="7" placeholder="2025-01-10    10250&#10;2025-01-24    10410"></textarea><div class="row wrap-row top-gap"><button id="applyBalancePaste" class="ghost-btn">Append Parsed Rows</button></div></details>`;
+      <div id="balanceContent" style="display:none">
+        <div class="admin-balance-table-wrap table-wrap">
+          <table class="table mono"><thead><tr><th>Date</th><th>Balance (USD)</th><th></th></tr></thead><tbody id="balanceBody"></tbody></table>
+        </div>
+        <div class="admin-mobile-rows" id="balanceMobileRows"></div>
+        <div class="subtle top-gap" id="balanceValidationHint">Each row must have a unique date inside the selected year.</div>
+        <div class="row wrap-row top-gap">
+          <button id="addBalanceRow">Add Balance Row</button>
+          <button id="addTenBalanceRows" class="ghost-btn">Add 10 Rows</button>
+          <button id="saveBalanceRows">Save Selected Year</button>
+        </div>
+        <details class="bulk-box top-gap"><summary>Bulk Paste Weekly Balances</summary><div class="subtle top-gap">Paste two columns from a spreadsheet: date and balance. Tabs, commas, or multiple spaces all work.</div><textarea id="balanceBulkPaste" rows="7" placeholder="2025-01-10    10250&#10;2025-01-24    10410"></textarea><div class="row wrap-row top-gap"><button id="applyBalancePaste" class="ghost-btn">Append Parsed Rows</button></div></details>
+      </div>`;
    
     parent.appendChild(sec);
    
     const tbody = sec.querySelector('#balanceBody');
     const mobileRows = sec.querySelector('#balanceMobileRows');
     const yearSelect = sec.querySelector('#balanceYearSelect');
-   
+
+    const balanceContent = sec.querySelector('#balanceContent');
+    const toggleBalancesBtn = sec.querySelector('#toggleBalances');
+    toggleBalancesBtn.onclick = () => {
+      const hidden = balanceContent.style.display === 'none';
+      balanceContent.style.display = hidden ? '' : 'none';
+      toggleBalancesBtn.textContent = hidden ? 'Hide' : 'Show';
+    };
+
     const inferNextDate = () => {
       const dates = [...tbody.querySelectorAll('.date-input')].map((input) => input.value).filter(Boolean);
       if (!dates.length) return '';
@@ -1637,29 +1732,44 @@ function renderAdmin(container) {
     const rows = (bundle.transactions || []).slice().sort((a, b) => String(a.tx_date || '').localeCompare(String(b.tx_date || '')));
    
     sec.innerHTML = `
-      <h3>Transactions</h3>
-      <div class="subtle">Date, amount, and NAV/share are entered manually.</div>
-      <div class="admin-tx-table-wrap table-wrap">
-        <table class="table mono">
-          <thead><tr><th>Date</th><th>Type</th><th>Amount (USD)</th><th>NAV / Share (USD)</th><th>Notes</th><th></th></tr></thead>
-          <tbody id="txBody"></tbody>
-        </table>
+      <div class="section-head">
+        <div>
+          <h3>Transactions</h3>
+          <div class="subtle">Date, amount, and NAV/share are entered manually.</div>
+        </div>
+        <button id="toggleTx" class="ghost-btn">Show</button>
       </div>
-      <div class="admin-mobile-rows" id="txMobileRows"></div>
-      <div class="row wrap-row top-gap">
-        <button id="addTxRow">Add Transaction</button>
-        <button id="saveTxRows">Save Transactions</button>
+      <div id="txContent" style="display:none">
+        <div class="admin-tx-table-wrap table-wrap">
+          <table class="table mono">
+            <thead><tr><th>Date</th><th>Type</th><th>Amount (USD)</th><th>NAV / Share (USD)</th><th>Notes</th><th></th></tr></thead>
+            <tbody id="txBody"></tbody>
+          </table>
+        </div>
+        <div class="admin-mobile-rows" id="txMobileRows"></div>
+        <div class="row wrap-row top-gap">
+          <button id="addTxRow">Add Transaction</button>
+          <button id="saveTxRows">Save Transactions</button>
+        </div>
       </div>`;
    
     parent.appendChild(sec);
-   
+
+    const txContent = sec.querySelector('#txContent');
+    const toggleTxBtn = sec.querySelector('#toggleTx');
+    toggleTxBtn.onclick = () => {
+      const hidden = txContent.style.display === 'none';
+      txContent.style.display = hidden ? '' : 'none';
+      toggleTxBtn.textContent = hidden ? 'Hide' : 'Show';
+    };
+
     const tbody = sec.querySelector('#txBody');
     const mobileRows = sec.querySelector('#txMobileRows');
-   
+
     const addRow = (tx = {}) => {
       const tr = makeTableRow([
         `<td><input class="date-input" type="date" value="${escapeHtml(tx.tx_date || '')}" /></td>`,
-        `<td><select class="type-input"><option value="deposit" ${tx.tx_type === 'deposit' ? 'selected' : ''}>Deposit</option><option value="redemption" ${tx.tx_type === 'redemption' ? 'selected' : ''}>Redemption</option></select></td>`,
+        `<td><select class="type-input">${Object.entries(TX_TYPE_LABELS).map(([v, l]) => `<option value="${v}" ${tx.tx_type === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td>`,
         `<td><input class="money-input amount-input" value="${escapeHtml(centsToInput(tx.amount_cents))}" placeholder="0.00" /></td>`,
         `<td><input class="money-input nav-input" value="${escapeHtml(centsToInput(tx.nav_per_share_cents))}" placeholder="0.00" /></td>`,
         `<td><input class="notes-input" value="${escapeHtml(tx.notes || '')}" placeholder="Optional" /></td>`,
@@ -1711,7 +1821,9 @@ function renderAdmin(container) {
   })();
 };
 
+let _homeGen = 0;
 function renderHome() {
+  const _gen = ++_homeGen;
   app.innerHTML = '';
   document.querySelector('.mobile-nav')?.remove();
  
@@ -1733,6 +1845,7 @@ function renderHome() {
   renderLastUpdatedSection(app);
  
   api('/api/me').then((bundle) => {
+    if (_gen !== _homeGen) return;
     state.user = bundle.user;
     app.innerHTML = '';
  

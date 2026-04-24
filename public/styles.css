@@ -62,7 +62,27 @@ button.danger-btn{background:linear-gradient(135deg,#b60000,#ff4d4d)}
 .mobile-only { display: none; }
 .desktop-only { display: block; } /* Explicitly show on desktop */
 
-/** -- mobile nav-bar -- */ 
+.remove-icon-btn {
+  background: #2a0a0a;
+  border: 1px solid #7a1a1a;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #ff4d4d;
+  flex-shrink: 0;
+  padding: 0;
+}
+.remove-icon-btn:hover { background: #3d0e0e; border-color: #ff4d4d; }
+
+/* -- Documents table: prevent long filenames from overflowing -- */
+.doc-table { table-layout: fixed; width: 100%; }
+.doc-name-cell { word-break: break-all; overflow-wrap: break-word; }
+.doc-info { min-width: 0; flex: 1; }
+.doc-filename { word-break: break-all; overflow-wrap: break-word; }
+
+/** -- mobile nav-bar -- */
 .mobile-nav { display: none; }
 
 @media (max-width:720px){
@@ -89,6 +109,8 @@ button.danger-btn{background:linear-gradient(135deg,#b60000,#ff4d4d)}
     justify-content: center;
     cursor: pointer;
   }
+
+  .remove-icon-btn { width: 36px; height: 36px; }
 
   .mobile-nav{
     display: flex;

@@ -17,10 +17,13 @@ async function resolveChromiumExecutablePath() {
 
   try {
     const bundledPath = await chromium.executablePath();
-    if (bundledPath) return bundledPath;
+    if (bundledPath && fs.existsSync(bundledPath)) return bundledPath;
   } catch (_) {}
 
-  throw new Error('No Chromium executable found from system paths or @sparticuz/chromium');
+  throw new Error(
+    'No Chromium executable found. Set CHROME_PATH in your .env file to your local Chrome binary ' +
+    '(e.g. C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe on Windows).'
+  );
 }
 // Update 4-3-26: New function for automatically generating monthly statements for all investors
 // Generates a PDF statement for each investor for the previous calendar month (can change the date range if needed)
@@ -87,6 +90,8 @@ function getYmdParts(isoDate) {
 function buildStatementHtml({
   investorLabel,
   investorEmail,
+  investorId,
+  address,
   startDate,
   endDate,
   openingBalanceCents,
@@ -97,31 +102,40 @@ function buildStatementHtml({
   statementTitle = 'Monthly Statement'
 }) {
   const tone = depositTotalCents - redemptionTotalCents >= 0 ? 'positive' : 'negative';
-  const netCents = depositTotalCents - redemptionTotalCents;
+  const netCents = (transactions || []).reduce((sum, tx) => {
+    const sign = ['redemption','performance_fee','redemption_fee','other_fee','tax'].includes(tx.tx_type) ? -1 : 1;
+    return sum + sign * Math.abs(Number(tx.amount_cents || 0));
+  }, 0);
   const generatedOn = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  const placeholderInvestorId = 'TBD-INVESTOR-ID';
-  const placeholderAddress = 'ADDRESS PENDING - TO BE FILLED';
+
+  const TX_TYPE_LABELS = {
+    deposit: 'Deposit', redemption: 'Redemption', performance_fee: 'Performance Fee',
+    redemption_fee: 'Redemption Fee', management_credit: 'Management Credit',
+    extraordinary_dividend: 'Extraordinary Dividend', other_fee: 'Other Fee',
+    other_credit: 'Other Credit', tax: 'Tax',
+  };
+  const NEGATIVE_TX_TYPES = new Set(['redemption','performance_fee','redemption_fee','other_fee','tax']);
 
   let totalUnits = 0;
   let weightedPriceNumerator = 0;
   const rowsHtml = (transactions || []).map((tx) => {
-    const typeLabel = tx.tx_type === 'redemption' ? 'Redemption' : 'Deposit';
-    const isRedemption = tx.tx_type === 'redemption';
+    const typeLabel = TX_TYPE_LABELS[tx.tx_type] || tx.tx_type;
+    const isNegative = NEGATIVE_TX_TYPES.has(tx.tx_type);
     const amountAbsCents = Math.abs(Number(tx.amount_cents || 0));
-    const signedAmountCents = isRedemption ? -amountAbsCents : amountAbsCents;
+    const signedAmountCents = isNegative ? -amountAbsCents : amountAbsCents;
     const amountLabel = fmtMoney(signedAmountCents);
     const navPerShareCents = tx.nav_per_share_cents === null || tx.nav_per_share_cents === undefined
       ? null
       : Number(tx.nav_per_share_cents || 0);
     const navLabel = navPerShareCents === null ? '—' : fmtMoney(navPerShareCents);
     const quantity = navPerShareCents && navPerShareCents > 0 ? amountAbsCents / navPerShareCents : null;
-    const signedQty = quantity === null ? null : (isRedemption ? -quantity : quantity);
-    if (!isRedemption && quantity !== null) {
+    const signedQty = quantity === null ? null : (isNegative ? -quantity : quantity);
+    if (tx.tx_type === 'deposit' && quantity !== null) {
       totalUnits += quantity;
       weightedPriceNumerator += quantity * (navPerShareCents / 100);
     }
 
-    const itemLabel = tx.notes || (isRedemption ? 'Redemption' : 'Investment');
+    const itemLabel = tx.notes || typeLabel;
     return `
       <tr>
         <td>${escapeHtml(tx.tx_date || '—')}</td>
@@ -133,15 +147,25 @@ function buildStatementHtml({
       </tr>`;
   }).join('');
   const weightedAvgPrice = totalUnits > 0 ? weightedPriceNumerator / totalUnits : null;
-  const investmentRevenueCents = closingBalanceCents - openingBalanceCents - netCents;
   const marketValueAndDividendsCents = closingBalanceCents - depositTotalCents + redemptionTotalCents;
-  const performanceFeesCents = 0;
-  const redemptionFeesCents = 0;
-  const managementCreditsCents = 0;
-  const extraordinaryDividendsCents = 0;
-  const subTotalCents = investmentRevenueCents - performanceFeesCents - redemptionFeesCents + managementCreditsCents + extraordinaryDividendsCents;
-  const taxCents = Math.round(Math.max(0, subTotalCents) * 0.0328);
-  const netGainsCents = subTotalCents - taxCents;
+  const byType = {};
+  for (const tx of transactions || []) {
+    const amt = Math.abs(Number(tx.amount_cents || 0));
+    byType[tx.tx_type] = (byType[tx.tx_type] || 0) + amt;
+  }
+  const performanceFeesCents = byType.performance_fee || 0;
+  const redemptionFeesCents = byType.redemption_fee || 0;
+  const managementCreditsCents = byType.management_credit || 0;
+  const extraordinaryDividendsCents = byType.extraordinary_dividend || 0;
+  const otherFeesCents = byType.other_fee || 0;
+  const otherCreditsCents = byType.other_credit || 0;
+  const taxCents = byType.tax || 0;
+  const netInvestmentsCents = depositTotalCents - redemptionTotalCents;
+  const investmentRevenueCents = closingBalanceCents - netInvestmentsCents;
+  const totalCreditsCents = managementCreditsCents + extraordinaryDividendsCents + otherCreditsCents;
+  const totalFeesCents = performanceFeesCents + redemptionFeesCents + otherFeesCents;
+  const subtotalCents = investmentRevenueCents + totalCreditsCents - totalFeesCents;
+  const netGainCents = subtotalCents - taxCents;
 
   return `
     <!doctype html>
@@ -193,9 +217,9 @@ function buildStatementHtml({
             <div class="left">
               <h1 class="title">${escapeHtml(statementTitle)}</h1>
               <div class="kv"><b>Investor</b>${escapeHtml(investorLabel || 'Investor')}</div>
-              <div class="kv"><b>Investor ID</b>${escapeHtml(placeholderInvestorId)}</div>
+              <div class="kv"><b>Investor ID</b>${escapeHtml(investorId || '—')}</div>
               <div class="kv"><b>Email</b>${escapeHtml(investorEmail || '—')}</div>
-              <div class="kv"><b>Address</b>${escapeHtml(placeholderAddress)}</div>
+              <div class="kv"><b>Address</b><br>${escapeHtml(address || '—')}</div>
             </div>
             <div class="period">
               <div class="label">Period</div>
@@ -248,16 +272,25 @@ function buildStatementHtml({
           </table>
 
           <div class="section">
-            <div class="head">Revenue & Fees</div>
+            <div class="head">Investment Activity</div>
+            <div class="lines">
+              <div class="line"><div>Total Deposits</div><div class="amt pos">${escapeHtml(fmtMoney(depositTotalCents))}</div></div>
+              <div class="line"><div>Total Redemptions</div><div class="amt ${redemptionTotalCents > 0 ? 'neg' : ''}">${escapeHtml(fmtMoney(-redemptionTotalCents))}</div></div>
+              <div class="line"><div>Net Investments</div><div class="amt">${escapeHtml(fmtMoney(netInvestmentsCents))}</div></div>
+              <div class="line"><div>Market Value</div><div class="amt">${escapeHtml(fmtMoney(closingBalanceCents))}</div></div>
+              <div class="line bold"><div>Investment Revenue</div><div class="amt ${investmentRevenueCents < 0 ? 'neg' : 'pos'}">${escapeHtml(fmtMoney(investmentRevenueCents))}</div></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="head">Revenue Summary</div>
             <div class="lines">
               <div class="line"><div>Investment Revenue</div><div class="amt">${escapeHtml(fmtMoney(investmentRevenueCents))}</div></div>
-              <div class="line"><div>Performance Fees</div><div class="amt">${escapeHtml(fmtMoney(performanceFeesCents))}</div></div>
-              <div class="line"><div>Redemption Fees</div><div class="amt">${escapeHtml(fmtMoney(redemptionFeesCents))}</div></div>
-              <div class="line"><div>Management Credits</div><div class="amt">${escapeHtml(fmtMoney(managementCreditsCents))}</div></div>
-              <div class="line"><div>Extraordinary Dividends</div><div class="amt">${escapeHtml(fmtMoney(extraordinaryDividendsCents))}</div></div>
-              <div class="line"><div>Sub-Total</div><div class="amt">${escapeHtml(fmtMoney(subTotalCents))}</div></div>
-              <div class="line"><div>Tax</div><div class="amt">${escapeHtml(fmtMoney(taxCents))}</div></div>
-              <div class="line bold"><div>Net Gains</div><div class="amt">${escapeHtml(fmtMoney(netGainsCents))}</div></div>
+              <div class="line"><div>Credits</div><div class="amt ${totalCreditsCents > 0 ? 'pos' : ''}">${escapeHtml(fmtMoney(totalCreditsCents))}</div></div>
+              <div class="line"><div>Fees</div><div class="amt ${totalFeesCents > 0 ? 'neg' : ''}">${escapeHtml(fmtMoney(-totalFeesCents))}</div></div>
+              <div class="line bold"><div>Subtotal</div><div class="amt">${escapeHtml(fmtMoney(subtotalCents))}</div></div>
+              <div class="line"><div>Taxes</div><div class="amt ${taxCents > 0 ? 'neg' : ''}">${escapeHtml(fmtMoney(-taxCents))}</div></div>
+              <div class="line bold"><div>Net Gain</div><div class="amt ${netGainCents < 0 ? 'neg' : 'pos'}">${escapeHtml(fmtMoney(netGainCents))}</div></div>
             </div>
           </div>
 
@@ -284,7 +317,11 @@ async function renderHtmlToPdf(page, html, filePath) {
 async function generateMonthlyStatements({
   startDate,
   endDate,
-  fileNamePrefix = 'Monthly_Statement',
+  customFileName = null,
+  frequency = 'monthly',
+  statementMonth = null,
+  statementYear = null,
+  statementQuarter = null,
   statementTitle = 'Monthly Statement',
   investorIds = null, // null = generate for all investors
   get,
@@ -302,7 +339,7 @@ async function generateMonthlyStatements({
   if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
   const allInvestors = await all(
-    `SELECT id, email, display_label, role, balance_cents, deposit_cents
+    `SELECT id, email, display_label, investor_id, address, role, balance_cents, deposit_cents
      FROM users
      WHERE role != 'admin'
      ORDER BY id ASC`
@@ -339,11 +376,21 @@ const browser = await puppeteer.launch({
     const investorLabel = (inv.display_label || inv.email || 'Investor').trim();
 
     try {
-      const safePrefix = sanitizeFileStem(fileNamePrefix || 'Monthly_Statement');
-      const safeInvestor = sanitizeFileStem(investorLabel || `Investor_${userId}`);
-      const safeStart = sanitizeFileStem(startDate);
-      const safeEnd = sanitizeFileStem(endDate);
-      const fileName = `${safePrefix}_${safeInvestor}_${safeStart}_to_${safeEnd}.pdf`;
+      const nameParts = (investorLabel || `Investor_${userId}`).trim().split(/\s+/);
+      const safeName = nameParts.length > 1
+        ? `${sanitizeFileStem(nameParts[0])}_${sanitizeFileStem(nameParts[nameParts.length - 1])}`
+        : sanitizeFileStem(nameParts[0]);
+
+      let fileName;
+      if (customFileName) {
+        fileName = `${sanitizeFileStem(customFileName)}_${safeName}.pdf`;
+      } else if (frequency === 'quarterly') {
+        fileName = `${safeName}_Quarterly_Statement_Q${statementQuarter || ''}.pdf`;
+      } else if (frequency === 'annually' || frequency === 'annual' || frequency === 'yearly') {
+        fileName = `${safeName}_Annual_Statement_${statementYear || ''}.pdf`;
+      } else {
+        fileName = `${safeName}_Monthly_Statement_${statementMonth || ''}_${statementYear || ''}.pdf`;
+      }
       const filePath = path.join(uploadDir, fileName);
 
       // Allow re-running generation for the same period: replace DB row(s) and PDF on disk.
@@ -406,12 +453,14 @@ const browser = await puppeteer.launch({
       for (const tx of transactions || []) {
         const amt = Math.abs(Number(tx.amount_cents || 0));
         if (tx.tx_type === 'redemption') redemptionTotalCents += amt;
-        else depositTotalCents += amt;
+        else if (tx.tx_type === 'deposit') depositTotalCents += amt;
       }
 
       const html = buildStatementHtml({
         investorLabel,
         investorEmail: inv.email,
+        investorId: inv.investor_id || null,
+        address: inv.address || null,
         startDate,
         endDate,
         openingBalanceCents,
