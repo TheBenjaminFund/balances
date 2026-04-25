@@ -161,8 +161,8 @@ function buildStatementHtml({
   const otherCreditsCents = byType.other_credit || 0;
   const taxCents = byType.tax || 0;
   const netInvestmentsCents = depositTotalCents - redemptionTotalCents;
-  const investmentRevenueCents = closingBalanceCents - netInvestmentsCents;
-  const totalCreditsCents = managementCreditsCents + extraordinaryDividendsCents + otherCreditsCents;
+  const investmentRevenueCents = closingBalanceCents - openingBalanceCents - netInvestmentsCents;
+  const totalCreditsCents =  managementCreditsCents + extraordinaryDividendsCents + otherCreditsCents;
   const totalFeesCents = performanceFeesCents + redemptionFeesCents + otherFeesCents;
   const subtotalCents = investmentRevenueCents + totalCreditsCents - totalFeesCents;
   const netGainCents = subtotalCents - taxCents;
@@ -274,6 +274,7 @@ function buildStatementHtml({
           <div class="section">
             <div class="head">Investment Activity</div>
             <div class="lines">
+              <div class="line"><div>Opening Balance</div><div class ="amt" style="font-weight: bold;">${escapeHtml(fmtMoney(openingBalanceCents))}</div></div>
               <div class="line"><div>Total Deposits</div><div class="amt pos">${escapeHtml(fmtMoney(depositTotalCents))}</div></div>
               <div class="line"><div>Total Redemptions</div><div class="amt ${redemptionTotalCents > 0 ? 'neg' : ''}">${escapeHtml(fmtMoney(-redemptionTotalCents))}</div></div>
               <div class="line"><div>Net Investments</div><div class="amt">${escapeHtml(fmtMoney(netInvestmentsCents))}</div></div>
